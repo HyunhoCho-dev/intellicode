@@ -2,9 +2,6 @@
 src/
 tsconfig.json
 
-# Installer script — not part of the npm package
-*.ps1
-
 # Development / CI artefacts
 .github/
 *.log

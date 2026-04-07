@@ -4,9 +4,12 @@
 #   iex (iwr -useb https://raw.githubusercontent.com/HyunhoCho-dev/intellicode/main/install.ps1).Content
 #
 # What this script does:
-#   1. Checks for Node.js (>= 18) and npm
-#   2. Installs intellicode globally via npm from the GitHub repository
-#   3. Verifies the installation
+#   1. Checks for Node.js (>= 18), npm, and git
+#   2. Clones the repository to a temporary directory
+#   3. Installs intellicode globally via "npm install -g ." from the local clone
+#      (this strategy avoids the TAR_ENTRY_ERROR / ENOENT failures that occur
+#       when npm tries to extract a GitHub tarball on Windows)
+#   4. Verifies the installation
 #
 # NOTE: All exit paths use 'return' (not 'exit') so this script is safe to run
 # via iex without closing the calling PowerShell session.
@@ -16,7 +19,6 @@ function Install-Intellicode {
 param()
 
 $Repo  = "HyunhoCho-dev/intellicode"
-$Pkg   = "github:$Repo"
 $Cmd   = "intellicode"
 
 function Write-Step([string]$msg) {
@@ -45,7 +47,7 @@ Write-Host ""
 Write-Host "  AI coding agent powered by GitHub Copilot" -ForegroundColor DarkGray
 Write-Host ""
 
-# ─── Check Node.js ────────────────────────────────────────────────────────────
+# ─── Check prerequisites ──────────────────────────────────────────────────────
 
 Write-Step "Checking prerequisites..."
 
@@ -80,7 +82,20 @@ if (-not $npmPath) {
 $npmVersion = & npm --version 2>&1
 Write-Success "npm v$npmVersion detected"
 
-# ─── Uninstall any previous version (clears npm's git-dep cache) ─────────────
+$gitPath = Get-Command git -ErrorAction SilentlyContinue
+if (-not $gitPath) {
+    Write-Fail "git is not installed."
+    Write-Host ""
+    Write-Host "  Please install Git from: https://git-scm.com/download/win" -ForegroundColor Yellow
+    Write-Host "  Then re-run this installer." -ForegroundColor Yellow
+    Write-Host ""
+    Read-Host "  Press Enter to close"
+    return
+}
+$gitVersion = & git --version 2>&1
+Write-Success "$gitVersion detected"
+
+# ─── Uninstall any previous version ──────────────────────────────────────────
 
 $existingCmd = Get-Command $Cmd -ErrorAction SilentlyContinue
 if ($existingCmd) {
@@ -89,15 +104,44 @@ if ($existingCmd) {
     Write-Success "Previous version removed"
 }
 
-# ─── Install ──────────────────────────────────────────────────────────────────
+# ─── Clone repository to a temporary directory ───────────────────────────────
+#
+# Using "git clone + npm install -g ." instead of "npm install -g github:..."
+# avoids TAR_ENTRY_ERROR / ENOENT failures on Windows, where npm's tarball
+# extractor can fail to create nested subdirectories (e.g. dist/tools/).
+
+$tempDir = Join-Path $env:TEMP "intellicode-install-$([System.IO.Path]::GetRandomFileName())"
+
+Write-Step "Cloning repository..."
+Write-Host "  (Cloning: https://github.com/$Repo)" -ForegroundColor DarkGray
+Write-Host ""
+
+$cloneOutput = & git clone --depth=1 "https://github.com/$Repo.git" $tempDir 2>&1
+$cloneOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Fail "Failed to clone repository (exit code $LASTEXITCODE)."
+    Write-Host ""
+    Write-Host "  Make sure you have an internet connection and try again." -ForegroundColor Yellow
+    if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue }
+    Read-Host "  Press Enter to close"
+    return
+}
+Write-Success "Repository cloned to temporary directory"
+
+# ─── Install from local clone ─────────────────────────────────────────────────
 
 Write-Step "Installing intellicode..."
-Write-Host "  (Running: npm install -g $Pkg)" -ForegroundColor DarkGray
+Write-Host "  (Running: npm install -g . from local clone)" -ForegroundColor DarkGray
 Write-Host ""
 
 $installFailed = $false
+$locationChanged = $false
 try {
-    $npmOutput = & npm install -g $Pkg 2>&1
+    Push-Location $tempDir
+    $locationChanged = $true
+    $npmOutput = & npm install -g . 2>&1
     $npmOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     if ($LASTEXITCODE -ne 0) {
         $installFailed = $true
@@ -107,9 +151,15 @@ try {
     Write-Fail "Installation failed: $_"
     Write-Host ""
     Write-Host "  If you see permission errors, try running as Administrator." -ForegroundColor Yellow
+    if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue }
     Read-Host "  Press Enter to close"
     return
+} finally {
+    if ($locationChanged) { Pop-Location }
 }
+
+# Clean up temporary clone regardless of install outcome
+if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue }
 
 if ($installFailed) {
     Write-Host ""
@@ -141,19 +191,18 @@ if ($npmGlobalBin -and (Test-Path $npmGlobalBin)) {
 
 Write-Step "Verifying installation..."
 
-# Verify that the dist/index.js entry point was included in the installed package.
-# This catches the MODULE_NOT_FOUND error before the user runs intellicode.
+# Verify that the dist/index.js entry point is present in the installed package.
 $npmGlobalModules = (& npm config get prefix 2>$null | Out-String).Trim()
 if ($npmGlobalModules -and (Test-Path $npmGlobalModules)) {
-    $entryPoint = Join-Path $npmGlobalModules (Join-Path "node_modules" (Join-Path "intellicode" (Join-Path "dist" "index.js")))
+    $entryPoint = Join-Path $npmGlobalModules "node_modules" "intellicode" "dist" "index.js"
     if (-not (Test-Path $entryPoint)) {
         Write-Fail "Entry point not found: $entryPoint"
         Write-Host ""
         Write-Host "  The dist/index.js file is missing from the installed package." -ForegroundColor Yellow
-        Write-Host "  This indicates a corrupted or incomplete installation." -ForegroundColor Yellow
-        Write-Host "  Try uninstalling and reinstalling:" -ForegroundColor Yellow
-        Write-Host "    npm uninstall -g intellicode" -ForegroundColor Cyan
-        Write-Host "    npm install -g github:$Repo" -ForegroundColor Cyan
+        Write-Host "  Try running this installer again, or install manually:" -ForegroundColor Yellow
+        Write-Host "    git clone https://github.com/$Repo.git" -ForegroundColor Cyan
+        Write-Host "    cd intellicode" -ForegroundColor Cyan
+        Write-Host "    npm install -g ." -ForegroundColor Cyan
         Read-Host "  Press Enter to close"
         return
     }
@@ -182,7 +231,7 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host ""
     Write-Host "  The command was installed but cannot run. Try:" -ForegroundColor Yellow
     Write-Host "    npm uninstall -g intellicode" -ForegroundColor Cyan
-    Write-Host "    npm install -g github:$Repo" -ForegroundColor Cyan
+    Write-Host "    git clone https://github.com/$Repo.git && cd intellicode && npm install -g ." -ForegroundColor Cyan
     Read-Host "  Press Enter to close"
     return
 }
