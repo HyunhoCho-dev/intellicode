@@ -327,7 +327,10 @@ class Planner {
                 const configuredEnv = args['env'] ?? {};
                 // ── Penpot-specific pre-flight setup ──────────────────────────────
                 if (serverName.trim().toLowerCase() === 'penpot') {
-                    // 1. Ensure pnpm is installed (Penpot MCP requires it internally)
+                    // 1. Ensure pnpm is installed (Penpot MCP requires it internally).
+                    //    executeCommand routes through the OS shell (PowerShell on Windows,
+                    //    bash on Unix), which resolves .cmd wrappers automatically, so we
+                    //    do not need to append ".cmd" manually here.
                     const pnpmCheck = await (0, shell_1.executeCommand)('pnpm --version');
                     if (pnpmCheck.exitCode !== 0) {
                         onToken('\x1b[96m⚙  pnpm not found — installing globally via npm…\x1b[0m\n');
