@@ -76,11 +76,27 @@ Write-Success "npm v$npmVersion detected"
 
 Write-Step "Installing intellicode..."
 Write-Host "  (Running: npm install -g $Pkg)" -ForegroundColor DarkGray
+Write-Host ""
 
+$npmOutput = @()
 try {
-    & npm install -g $Pkg 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-    if ($LASTEXITCODE -ne 0) { throw "npm exited with code $LASTEXITCODE" }
+    $npmOutput = & npm install -g $Pkg 2>&1
+    $npmOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        Write-Fail "npm exited with code $LASTEXITCODE"
+        Write-Host ""
+        Write-Host "  Full npm output above. Common fixes:" -ForegroundColor Yellow
+        Write-Host ""
+        Write-Host "  1. Run PowerShell as Administrator and try again." -ForegroundColor Yellow
+        Write-Host "  2. If you see EACCES/EPERM errors, fix npm permissions:" -ForegroundColor Yellow
+        Write-Host "       https://docs.npmjs.com/resolving-eacces-permissions-errors" -ForegroundColor Yellow
+        Write-Host "  3. If you see network errors, check your internet connection." -ForegroundColor Yellow
+        Write-Host ""
+        exit 1
+    }
 } catch {
+    Write-Host ""
     Write-Fail "Installation failed: $_"
     Write-Host ""
     Write-Host "  If you see permission errors, try running as Administrator." -ForegroundColor Yellow
