@@ -158,10 +158,8 @@ try {
     if ($locationChanged) { Pop-Location }
 }
 
-# Clean up temporary clone regardless of install outcome
-if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue }
-
 if ($installFailed) {
+    if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue }
     Write-Host ""
     Write-Fail "npm exited with code $LASTEXITCODE"
     Write-Host ""
@@ -175,6 +173,31 @@ if ($installFailed) {
     Read-Host "  Press Enter to close"
     return
 }
+
+# ─── TAR extraction workaround ────────────────────────────────────────────────
+#
+# On Windows, npm's internal tar extractor can produce TAR_ENTRY_ERROR / ENOENT
+# when creating nested subdirectories (e.g. dist/tools/).  If dist/index.js is
+# missing from the globally installed package after "npm install -g .", copy the
+# dist/ folder directly from the temporary clone before cleaning up.
+
+$globalPrefix = (& npm config get prefix 2>$null | Out-String).Trim()
+if ($globalPrefix) {
+    $installedEntry = [System.IO.Path]::Combine($globalPrefix, "node_modules", $Cmd, "dist", "index.js")
+    if (-not (Test-Path $installedEntry)) {
+        Write-Host "  Applying Windows compatibility patch (copying dist/ directly)..." -ForegroundColor DarkGray
+        $pkgDir = [System.IO.Path]::Combine($globalPrefix, "node_modules", $Cmd)
+        if (Test-Path $pkgDir) {
+            $destDist = [System.IO.Path]::Combine($pkgDir, "dist")
+            if (-not (Test-Path $destDist)) { New-Item -ItemType Directory -Path $destDist -Force | Out-Null }
+            $srcDist = Join-Path $tempDir "dist"
+            if (Test-Path $srcDist) { Copy-Item -Recurse -Force "$srcDist\*" $destDist }
+        }
+    }
+}
+
+# Clean up temporary clone
+if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue }
 
 # ─── Refresh PATH so the new binary is visible in this session ────────────────
 
@@ -194,7 +217,7 @@ Write-Step "Verifying installation..."
 # Verify that the dist/index.js entry point is present in the installed package.
 $npmGlobalModules = (& npm config get prefix 2>$null | Out-String).Trim()
 if ($npmGlobalModules -and (Test-Path $npmGlobalModules)) {
-    $entryPoint = Join-Path $npmGlobalModules "node_modules" "intellicode" "dist" "index.js"
+    $entryPoint = [System.IO.Path]::Combine($npmGlobalModules, "node_modules", $Cmd, "dist", "index.js")
     if (-not (Test-Path $entryPoint)) {
         Write-Fail "Entry point not found: $entryPoint"
         Write-Host ""
