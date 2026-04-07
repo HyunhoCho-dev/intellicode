@@ -20,31 +20,11 @@ import { fsTools, FsTool } from '../tools/fs';
 import { shellTools, ShellTool, executeCommand } from '../tools/shell';
 import { McpManager } from '../mcp/manager';
 import { MemoryManager } from '../memory/manager';
+import { createExecutingSpinner } from '../ui';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type ThinkLevel = 'off' | 'low' | 'medium' | 'high';
-
-// ─── Execution spinner ────────────────────────────────────────────────────────
-
-const EXEC_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-
-/**
- * Show a sky-blue animated spinner on stdout while a tool call is executing.
- * Returns a `stop()` function that clears the spinner line when called.
- */
-function startExecutingSpinner(): () => void {
-  let idx = 0;
-  process.stdout.write(`\x1b[96m${EXEC_SPINNER_FRAMES[0]} Executing…\x1b[0m`);
-  const interval = setInterval(() => {
-    idx = (idx + 1) % EXEC_SPINNER_FRAMES.length;
-    process.stdout.write(`\r\x1b[96m${EXEC_SPINNER_FRAMES[idx]} Executing…\x1b[0m`);
-  }, 100);
-  return () => {
-    clearInterval(interval);
-    process.stdout.write('\r\x1b[2K');
-  };
-}
 
 // ─── System prompt ────────────────────────────────────────────────────────────
 
@@ -507,7 +487,7 @@ export class Planner {
     );
 
     // Start a sky-blue spinner while the tool is executing
-    const stopSpinner = startExecutingSpinner();
+    const stopSpinner = createExecutingSpinner();
 
     try {
       // Handle mcp_configure: install + start a new MCP server at runtime

@@ -15,24 +15,7 @@ exports.Planner = void 0;
 const github_copilot_1 = require("../providers/github-copilot");
 const fs_1 = require("../tools/fs");
 const shell_1 = require("../tools/shell");
-// ─── Execution spinner ────────────────────────────────────────────────────────
-const EXEC_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-/**
- * Show a sky-blue animated spinner on stdout while a tool call is executing.
- * Returns a `stop()` function that clears the spinner line when called.
- */
-function startExecutingSpinner() {
-    let idx = 0;
-    process.stdout.write(`\x1b[96m${EXEC_SPINNER_FRAMES[0]} Executing…\x1b[0m`);
-    const interval = setInterval(() => {
-        idx = (idx + 1) % EXEC_SPINNER_FRAMES.length;
-        process.stdout.write(`\r\x1b[96m${EXEC_SPINNER_FRAMES[idx]} Executing…\x1b[0m`);
-    }, 100);
-    return () => {
-        clearInterval(interval);
-        process.stdout.write('\r\x1b[2K');
-    };
-}
+const ui_1 = require("../ui");
 // ─── System prompt ────────────────────────────────────────────────────────────
 const SYSTEM_PROMPT = `You are IntelliCode, an expert AI software engineer and technical architect running in a terminal (PowerShell or bash).
 Your primary mission is to produce PRODUCTION-QUALITY code that represents the very best in software engineering craftsmanship.
@@ -431,7 +414,7 @@ class Planner {
         // Show a status indicator to the user
         onToken(`\n\x1b[90m⚙  ${name}(${this.formatArgs(args)})\x1b[0m\n`);
         // Start a sky-blue spinner while the tool is executing
-        const stopSpinner = startExecutingSpinner();
+        const stopSpinner = (0, ui_1.createExecutingSpinner)();
         try {
             // Handle mcp_configure: install + start a new MCP server at runtime
             if (name === 'mcp_configure') {
