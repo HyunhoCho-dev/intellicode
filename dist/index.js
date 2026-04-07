@@ -56,6 +56,7 @@ const github_copilot_1 = require("./providers/github-copilot");
 const planner_1 = require("./agent/planner");
 const manager_1 = require("./mcp/manager");
 const manager_2 = require("./memory/manager");
+const ui_1 = require("./ui");
 // ─── Package metadata ──────────────────────────────────────────────────────────
 const PKG_PATH = path.join(__dirname, '..', 'package.json');
 let PKG_VERSION = '0.1.0';
@@ -70,43 +71,14 @@ catch {
 // Shared between runRepl and the SIGINT handler registered in main().
 /** Non-null while the agent is streaming a response. */
 let activeAbortController = null;
-// ─── Spinner ──────────────────────────────────────────────────────────────────
-const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-function createSpinner() {
-    let idx = 0;
-    // Write initial frame immediately
-    process.stdout.write(`\r\x1b[96m${SPINNER_FRAMES[0]} Thinking…\x1b[0m`);
-    const interval = setInterval(() => {
-        idx = (idx + 1) % SPINNER_FRAMES.length;
-        process.stdout.write(`\r\x1b[96m${SPINNER_FRAMES[idx]} Thinking…\x1b[0m`);
-    }, 80);
-    return {
-        stop: () => {
-            clearInterval(interval);
-            // Erase the spinner line so the model response starts cleanly
-            process.stdout.write('\r\x1b[2K');
-        },
-    };
-}
-// ─── Banner ────────────────────────────────────────────────────────────────────
-function printBanner() {
-    console.log(`
-\x1b[96m  ___       _       _ _ _  _____          _      
- |_ _|_ __ | |_ ___| | (_)/ ____|___   __| | ___ 
-  | || '_ \\| __/ _ \\ | | | |   / _ \\ / _\` |/ _ \\
-  | || | | | ||  __/ | | | |__| (_) | (_| |  __/
- |___|_| |_|\\__\\___|_|_|_|\\_____\\___/ \\__,_|\\___|
-\x1b[0m`);
-    console.log(`  \x1b[90mAI coding agent powered by GitHub Copilot  v${PKG_VERSION}\x1b[0m\n`);
-}
 // ─── REPL ──────────────────────────────────────────────────────────────────────
 async function runRepl(planner, mcpManager, memoryManager) {
-    printBanner();
-    console.log('\x1b[90mType your request and press Enter. Type \x1b[0m/help\x1b[90m to see all commands.\x1b[0m\n');
+    (0, ui_1.printBanner)(PKG_VERSION);
+    (0, ui_1.printWelcome)();
     const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout,
-        prompt: '\x1b[96m➜ intellicode\x1b[0m  ',
+        prompt: ui_1.PROMPT,
         terminal: true,
     });
     rl.prompt();
@@ -118,28 +90,35 @@ async function runRepl(planner, mcpManager, memoryManager) {
         }
         // ── Built-in REPL commands ──────────────────────────────────────────────
         if (input === '/exit' || input === '/quit') {
-            console.log('\n\x1b[96mGoodbye!\x1b[0m\n');
+            console.log(`\n${ui_1.C.cyan}  Goodbye!${ui_1.C.reset}\n`);
             rl.close();
             process.exit(0);
         }
         if (input === '/clear' || input === '/reset') {
             planner.resetHistory();
-            console.log('\x1b[90m(Context cleared)\x1b[0m\n');
+            console.log(`${ui_1.C.gray}  ◦ Conversation context cleared.${ui_1.C.reset}\n`);
             rl.prompt();
             return;
         }
         if (input === '/history') {
-            console.log(`\x1b[90m(${planner.historyLength} messages in context)\x1b[0m\n`);
+            console.log(`${ui_1.C.gray}  ◦ ${planner.historyLength} messages in context.${ui_1.C.reset}\n`);
             rl.prompt();
             return;
         }
         if (input === '/help') {
-            printReplHelp();
+            (0, ui_1.printHelp)();
             rl.prompt();
             return;
         }
         if (input === '/status') {
-            printStatus(planner, mcpManager, memoryManager);
+            const configs = mcpManager.getConfigs();
+            (0, ui_1.printStatus)({
+                model: planner.getModel(),
+                thinkLevel: planner.getThinkLevelDescription(),
+                memories: memoryManager.size,
+                history: planner.historyLength,
+                mcpServers: configs.map((c) => c.name),
+            });
             rl.prompt();
             return;
         }
@@ -191,7 +170,7 @@ async function runRepl(planner, mcpManager, memoryManager) {
         rl.pause();
         process.stdout.write('\n');
         // Start the "Thinking…" spinner before the first token arrives
-        const spinner = createSpinner();
+        const spinner = (0, ui_1.createThinkingSpinner)();
         let spinnerStopped = false;
         const stopSpinnerOnce = () => {
             if (!spinnerStopped) {
@@ -213,7 +192,7 @@ async function runRepl(planner, mcpManager, memoryManager) {
         catch (err) {
             stopSpinnerOnce();
             const msg = err instanceof Error ? err.message : String(err);
-            console.error(`\n\x1b[31mError: ${msg}\x1b[0m\n`);
+            console.error(`\n${ui_1.C.red}  ✗ Error: ${msg}${ui_1.C.reset}\n`);
         }
         finally {
             activeAbortController = null;
@@ -222,104 +201,42 @@ async function runRepl(planner, mcpManager, memoryManager) {
         rl.prompt();
     });
     rl.on('close', () => {
-        console.log('\n\x1b[96mGoodbye!\x1b[0m\n');
+        console.log(`\n${ui_1.C.cyan}  Goodbye!${ui_1.C.reset}\n`);
         process.exit(0);
     });
 }
-function printReplHelp() {
-    console.log(`
-\x1b[96mAvailable REPL commands:\x1b[0m
-
-  \x1b[96mConversation\x1b[0m
-    /clear, /reset   Clear conversation context
-    /history         Show number of messages in context
-    /exit, /quit     Quit intellicode
-
-  \x1b[96mResponse control\x1b[0m
-    Ctrl+C           Stop the current response mid-stream (press again to exit)
-    (A \x1b[96m⠋ Thinking…\x1b[0m spinner is shown while the model is generating)
-
-  \x1b[96mModel & Reasoning\x1b[0m
-    /models          List available models and select one interactively
-    /think [level]   Set reasoning intensity: off | on | low | medium | high
-                     • off      — disable deep reasoning (fast, concise)
-                     • on       — re-enable reasoning (restores to medium)
-                     • low      — light reasoning
-                     • medium   — balanced (default)
-                     • high     — deep, careful reasoning
-                     (no argument shows the current level)
-
-  \x1b[96mMemory\x1b[0m
-    /memory list               List all stored memories
-    /memory set <key> <value>  Store a key-value memory
-    /memory delete <key>       Delete a memory by key
-    /memory clear              Clear all memories
-
-  \x1b[96mMCP Servers\x1b[0m
-    /mcp list        List configured and running MCP servers
-    /mcp install <pkg> [name]
-                     Install an npm MCP package and register it
-                     Example: /mcp install @modelcontextprotocol/server-brave-search brave-search
-
-  \x1b[96mPenpot Design Integration\x1b[0m
-    /penpot connect  Connect to Penpot MCP (guided setup with token prompt)
-    /penpot status   Show current Penpot connection status
-    /penpot help     Show Penpot workflow tips
-    (You can also just ask the agent to "design a login page" and it will
-    automatically configure the Penpot MCP server and use it.)
-
-  \x1b[96mMaintenance\x1b[0m
-    /update          Pull latest changes, install deps, and rebuild
-
-  \x1b[96mInfo\x1b[0m
-    /status          Show current model, think level, memory count, and MCP servers
-    /help            Show this help message
-`);
-}
-// ─── /status ──────────────────────────────────────────────────────────────────
-function printStatus(planner, mcpManager, memoryManager) {
-    const configs = mcpManager.getConfigs();
-    console.log(`
-\x1b[96mIntelliCode status:\x1b[0m
-  Model       : \x1b[96m${planner.getModel()}\x1b[0m
-  Think level : \x1b[96m${planner.getThinkLevelDescription()}\x1b[0m
-  Memories    : ${memoryManager.size} stored
-  History     : ${planner.historyLength} messages
-  MCP servers : ${configs.length > 0 ? configs.map((c) => c.name).join(', ') : '(none)'}
-`);
-}
 // ─── /models ──────────────────────────────────────────────────────────────────
 async function handleModelsCommand(planner, rl) {
-    console.log('\n\x1b[90mFetching available models…\x1b[0m');
+    console.log(`\n${ui_1.C.gray}  Fetching available models…${ui_1.C.reset}`);
     let models;
     try {
         models = await (0, github_copilot_1.listModels)();
     }
     catch {
-        console.warn('\x1b[33m⚠  Could not fetch models from API — showing defaults\x1b[0m');
+        console.warn(`${ui_1.C.yellow}  ⚠  Could not fetch models from API — showing defaults${ui_1.C.reset}`);
         models = ['gpt-4o', 'gpt-4', 'claude-3.5-sonnet'];
     }
     const current = planner.getModel();
-    console.log('\n\x1b[96mAvailable models:\x1b[0m\n');
+    console.log(`\n${ui_1.C.cyan}  Available models:${ui_1.C.reset}\n`);
     models.forEach((m, i) => {
-        const marker = m === current ? '\x1b[32m✓\x1b[0m' : ' ';
-        console.log(`  ${marker} \x1b[96m${i + 1}\x1b[0m. ${m}`);
+        const marker = m === current ? `${ui_1.C.green}✓${ui_1.C.reset}` : ' ';
+        console.log(`  ${marker} ${ui_1.C.cyan}${i + 1}${ui_1.C.reset}. ${m}`);
     });
     console.log();
     return new Promise((resolve) => {
-        rl.question(`\x1b[90mEnter number to select (current: ${current}), or press Enter to cancel:\x1b[0m `, (answer) => {
+        rl.question(`${ui_1.C.gray}  Enter number to select (current: ${current}), or press Enter to cancel:${ui_1.C.reset} `, (answer) => {
             const n = parseInt(answer.trim(), 10);
             if (!isNaN(n) && n >= 1 && n <= models.length) {
                 const chosen = models[n - 1];
                 planner.setModel(chosen);
                 (0, github_copilot_1.saveModelSettings)(chosen, planner.getThinkLevel());
-                console.log(`\x1b[32m✓ Model set to \x1b[96m${chosen}\x1b[0m\n`);
+                console.log(`${ui_1.C.green}  ✓ Model set to ${ui_1.C.reset}${ui_1.C.cyan}${chosen}${ui_1.C.reset}\n`);
             }
             else if (answer.trim() !== '') {
-                console.log('\x1b[90m(Invalid selection — model unchanged)\x1b[0m\n');
+                console.log(`${ui_1.C.gray}  ◦ Invalid selection — model unchanged.${ui_1.C.reset}\n`);
             }
             else {
-                console.log('\x1b[90m(Cancelled)\x1b[0m\n');
+                console.log(`${ui_1.C.gray}  ◦ Cancelled.${ui_1.C.reset}\n`);
             }
             resolve();
         });
@@ -331,28 +248,28 @@ function handleThinkCommand(input, planner) {
     const level = parts[1]?.toLowerCase();
     if (!level) {
         const cur = planner.getThinkLevel();
-        console.log(`\x1b[90mCurrent think level: \x1b[96m${cur}\x1b[0m\n`);
+        console.log(`${ui_1.C.gray}  ◦ Current think level: ${ui_1.C.reset}${ui_1.C.cyan}${cur}${ui_1.C.reset}\n`);
         return;
     }
     // 'on' is an alias for re-enabling reasoning at the default medium level
     if (level === 'on') {
         planner.setThinkLevel('medium');
         (0, github_copilot_1.saveModelSettings)(planner.getModel(), 'medium');
-        console.log('\x1b[32m✓ Thinking enabled\x1b[0m (level: \x1b[96mmedium\x1b[0m)\n');
+        console.log(`${ui_1.C.green}  ✓ Thinking enabled${ui_1.C.reset} (level: ${ui_1.C.cyan}medium${ui_1.C.reset})\n`);
         return;
     }
     if (level !== 'off' && level !== 'low' && level !== 'medium' && level !== 'high') {
-        console.log('\x1b[31mInvalid think level.\x1b[0m Use: ' +
-            '\x1b[96moff\x1b[0m | \x1b[96mon\x1b[0m | \x1b[96mlow\x1b[0m | \x1b[96mmedium\x1b[0m | \x1b[96mhigh\x1b[0m\n');
+        console.log(`${ui_1.C.red}  ✗ Invalid think level.${ui_1.C.reset} Use: ` +
+            `${ui_1.C.cyan}off${ui_1.C.reset} | ${ui_1.C.cyan}on${ui_1.C.reset} | ${ui_1.C.cyan}low${ui_1.C.reset} | ${ui_1.C.cyan}medium${ui_1.C.reset} | ${ui_1.C.cyan}high${ui_1.C.reset}\n`);
         return;
     }
     planner.setThinkLevel(level);
     (0, github_copilot_1.saveModelSettings)(planner.getModel(), level);
     if (level === 'off') {
-        console.log('\x1b[32m✓ Thinking disabled\x1b[0m (fast response mode)\n');
+        console.log(`${ui_1.C.green}  ✓ Thinking disabled${ui_1.C.reset} (fast response mode)\n`);
     }
     else {
-        console.log(`\x1b[32m✓ Think level set to \x1b[96m${level}\x1b[0m\n`);
+        console.log(`${ui_1.C.green}  ✓ Think level set to ${ui_1.C.reset}${ui_1.C.cyan}${level}${ui_1.C.reset}\n`);
     }
 }
 // ─── /memory ──────────────────────────────────────────────────────────────────
@@ -362,12 +279,12 @@ function handleMemoryCommand(input, memoryManager) {
     if (!sub || sub === 'list') {
         const entries = memoryManager.getAll();
         if (entries.length === 0) {
-            console.log('\x1b[90m(No memories stored)\x1b[0m\n');
+            console.log(`${ui_1.C.gray}  ◦ No memories stored.${ui_1.C.reset}\n`);
             return;
         }
-        console.log('\n\x1b[96mStored memories:\x1b[0m\n');
+        console.log(`\n${ui_1.C.cyan}  Stored memories:${ui_1.C.reset}\n`);
         for (const e of entries) {
-            console.log(`  \x1b[96m${e.key}\x1b[0m: ${e.value}`);
+            console.log(`  ${ui_1.C.cyan}${e.key}${ui_1.C.reset}  ${ui_1.C.gray}→${ui_1.C.reset}  ${e.value}`);
         }
         console.log();
         return;
@@ -376,104 +293,104 @@ function handleMemoryCommand(input, memoryManager) {
         const key = parts[2];
         const value = parts.slice(3).join(' ');
         if (!key || !value) {
-            console.log('\x1b[31mUsage:\x1b[0m /memory set <key> <value>\n');
+            console.log(`${ui_1.C.red}  ✗ Usage:${ui_1.C.reset} /memory set <key> <value>\n`);
             return;
         }
         memoryManager.set(key, value);
-        console.log(`\x1b[32m✓ Memory saved:\x1b[0m \x1b[96m${key}\x1b[0m = ${value}\n`);
+        console.log(`${ui_1.C.green}  ✓ Memory saved:${ui_1.C.reset} ${ui_1.C.cyan}${key}${ui_1.C.reset}  =  ${value}\n`);
         return;
     }
     if (sub === 'delete' || sub === 'del') {
         const key = parts[2];
         if (!key) {
-            console.log('\x1b[31mUsage:\x1b[0m /memory delete <key>\n');
+            console.log(`${ui_1.C.red}  ✗ Usage:${ui_1.C.reset} /memory delete <key>\n`);
             return;
         }
         if (memoryManager.delete(key)) {
-            console.log(`\x1b[32m✓ Memory deleted:\x1b[0m \x1b[96m${key}\x1b[0m\n`);
+            console.log(`${ui_1.C.green}  ✓ Memory deleted:${ui_1.C.reset} ${ui_1.C.cyan}${key}${ui_1.C.reset}\n`);
         }
         else {
-            console.log(`\x1b[90m(No memory found with key: ${key})\x1b[0m\n`);
+            console.log(`${ui_1.C.gray}  ◦ No memory found with key: ${key}${ui_1.C.reset}\n`);
         }
         return;
     }
     if (sub === 'clear') {
         memoryManager.clear();
-        console.log('\x1b[32m✓ All memories cleared\x1b[0m\n');
+        console.log(`${ui_1.C.green}  ✓ All memories cleared.${ui_1.C.reset}\n`);
         return;
     }
-    console.log('\x1b[31mUnknown /memory subcommand.\x1b[0m\n' +
-        'Usage:\n' +
-        '  /memory list\n' +
-        '  /memory set <key> <value>\n' +
-        '  /memory delete <key>\n' +
-        '  /memory clear\n');
+    console.log(`${ui_1.C.red}  ✗ Unknown /memory subcommand.${ui_1.C.reset}\n` +
+        '  Usage:\n' +
+        '    /memory list\n' +
+        '    /memory set <key> <value>\n' +
+        '    /memory delete <key>\n' +
+        '    /memory clear\n');
 }
 // ─── /update ──────────────────────────────────────────────────────────────────
 async function handleUpdateCommand() {
     // The package root is one directory above dist/ (where __dirname points)
     const repoDir = path.resolve(path.join(__dirname, '..'));
-    console.log('\n\x1b[96mUpdating IntelliCode…\x1b[0m\n');
+    console.log(`\n${ui_1.C.cyan}  Updating IntelliCode…${ui_1.C.reset}\n`);
     const { executeCommand } = await Promise.resolve().then(() => __importStar(require('./tools/shell')));
     // Verify that repoDir is actually a git repository before running commands
     const gitCheck = await executeCommand('git rev-parse --is-inside-work-tree', repoDir, 5000);
     if (gitCheck.exitCode !== 0) {
-        console.log('\x1b[31m✗ Cannot update:\x1b[0m The install directory is not a git repository.\n' +
+        console.log(`${ui_1.C.red}  ✗ Cannot update:${ui_1.C.reset} The install directory is not a git repository.\n` +
             `  Directory: ${repoDir}\n` +
             '  To update, re-run the installation script instead.\n');
         return;
     }
-    console.log('\x1b[90m→ Fetching latest changes from remote…\x1b[0m');
+    console.log(`${ui_1.C.gray}  → Fetching latest changes from remote…${ui_1.C.reset}`);
     const fetchResult = await executeCommand('git fetch --all', repoDir, 60000);
     if (fetchResult.exitCode !== 0) {
-        console.log('\x1b[31m✗ git fetch failed\x1b[0m');
+        console.log(`${ui_1.C.red}  ✗ git fetch failed${ui_1.C.reset}`);
         if (fetchResult.stderr)
-            console.log(`  stderr: ${fetchResult.stderr}`);
+            console.log(`    stderr: ${fetchResult.stderr}`);
         if (fetchResult.stdout)
-            console.log(`  stdout: ${fetchResult.stdout}`);
+            console.log(`    stdout: ${fetchResult.stdout}`);
         console.log();
         return;
     }
-    console.log('\x1b[32m✓ Fetched latest remote changes\x1b[0m');
-    console.log('\x1b[90m→ Syncing with origin/main (local build files will be overwritten)…\x1b[0m');
+    console.log(`${ui_1.C.green}  ✓ Fetched latest remote changes${ui_1.C.reset}`);
+    console.log(`${ui_1.C.gray}  → Syncing with origin/main (local build files will be overwritten)…${ui_1.C.reset}`);
     const resetResult = await executeCommand('git reset --hard origin/main', repoDir, 30000);
     if (resetResult.exitCode !== 0) {
-        console.log('\x1b[31m✗ git reset failed\x1b[0m');
+        console.log(`${ui_1.C.red}  ✗ git reset failed${ui_1.C.reset}`);
         if (resetResult.stderr)
-            console.log(`  stderr: ${resetResult.stderr}`);
+            console.log(`    stderr: ${resetResult.stderr}`);
         if (resetResult.stdout)
-            console.log(`  stdout: ${resetResult.stdout}`);
+            console.log(`    stdout: ${resetResult.stdout}`);
         console.log();
         return;
     }
     const resetOutput = resetResult.stdout.trim() || 'HEAD is now up to date.';
-    console.log(`\x1b[32m✓ ${resetOutput}\x1b[0m`);
-    console.log('\x1b[90m→ Installing dependencies…\x1b[0m');
+    console.log(`${ui_1.C.green}  ✓ ${resetOutput}${ui_1.C.reset}`);
+    console.log(`${ui_1.C.gray}  → Installing dependencies…${ui_1.C.reset}`);
     const installResult = await executeCommand('npm install', repoDir, 120000);
     if (installResult.exitCode !== 0) {
-        console.log('\x1b[31m✗ npm install failed\x1b[0m');
+        console.log(`${ui_1.C.red}  ✗ npm install failed${ui_1.C.reset}`);
         if (installResult.stderr)
-            console.log(`  stderr: ${installResult.stderr}`);
+            console.log(`    stderr: ${installResult.stderr}`);
         if (installResult.stdout)
-            console.log(`  stdout: ${installResult.stdout}`);
+            console.log(`    stdout: ${installResult.stdout}`);
         console.log();
         return;
     }
-    console.log('\x1b[32m✓ Dependencies installed\x1b[0m');
-    console.log('\x1b[90m→ Rebuilding…\x1b[0m');
+    console.log(`${ui_1.C.green}  ✓ Dependencies installed${ui_1.C.reset}`);
+    console.log(`${ui_1.C.gray}  → Rebuilding…${ui_1.C.reset}`);
     const buildResult = await executeCommand('npm run build', repoDir, 120000);
     if (buildResult.exitCode !== 0) {
-        console.log('\x1b[31m✗ Build failed\x1b[0m');
+        console.log(`${ui_1.C.red}  ✗ Build failed${ui_1.C.reset}`);
         if (buildResult.stderr)
-            console.log(`  stderr: ${buildResult.stderr}`);
+            console.log(`    stderr: ${buildResult.stderr}`);
         if (buildResult.stdout)
-            console.log(`  stdout: ${buildResult.stdout}`);
+            console.log(`    stdout: ${buildResult.stdout}`);
         console.log();
         return;
     }
-    console.log('\x1b[32m✓ Build complete\x1b[0m');
-    console.log('\n\x1b[32m✓ IntelliCode updated successfully!\x1b[0m ' +
-        '\x1b[90mPlease restart intellicode to use the new version.\x1b[0m\n');
+    console.log(`${ui_1.C.green}  ✓ Build complete${ui_1.C.reset}`);
+    console.log(`\n${ui_1.C.green}  ✓ IntelliCode updated successfully!${ui_1.C.reset} ` +
+        `${ui_1.C.gray}Please restart intellicode to use the new version.${ui_1.C.reset}\n`);
 }
 async function handleMcpReplCommand(input, mcpManager) {
     const parts = input.split(/\s+/);
@@ -481,13 +398,13 @@ async function handleMcpReplCommand(input, mcpManager) {
     if (sub === 'list') {
         const configs = mcpManager.getConfigs();
         if (configs.length === 0) {
-            console.log('\x1b[90m(No MCP servers configured)\x1b[0m\n');
+            console.log(`${ui_1.C.gray}  ◦ No MCP servers configured.${ui_1.C.reset}\n`);
             return;
         }
-        console.log('\n\x1b[96mConfigured MCP servers:\x1b[0m\n');
+        console.log(`\n${ui_1.C.cyan}  Configured MCP servers:${ui_1.C.reset}\n`);
         for (const c of configs) {
             const cmd = [c.command, ...(c.args ?? [])].join(' ');
-            console.log(`  \x1b[96m${c.name}\x1b[0m  —  ${cmd}`);
+            console.log(`  ${ui_1.C.cyan}${c.name}${ui_1.C.reset}  ${ui_1.C.gray}—${ui_1.C.reset}  ${cmd}`);
         }
         console.log();
         return;
@@ -495,20 +412,20 @@ async function handleMcpReplCommand(input, mcpManager) {
     if (sub === 'install') {
         const pkg = parts[2];
         if (!pkg) {
-            console.log('\x1b[31mUsage:\x1b[0m /mcp install <npm-package> [server-name]\n');
+            console.log(`${ui_1.C.red}  ✗ Usage:${ui_1.C.reset} /mcp install <npm-package> [server-name]\n`);
             return;
         }
         const rawName = parts[3] ?? pkg.replace(/^@[^/]+\//, '').replace(/^server-/, '');
         // Sanitize: keep only alphanumeric, hyphens, underscores; fall back to 'mcp-server' if empty
         const name = rawName.replace(/[^a-zA-Z0-9_-]/g, '-').replace(/^-+|-+$/g, '') || 'mcp-server';
-        console.log(`\n\x1b[90mInstalling ${pkg}…\x1b[0m`);
+        console.log(`\n${ui_1.C.gray}  → Installing ${pkg}…${ui_1.C.reset}`);
         const { executeCommand } = await Promise.resolve().then(() => __importStar(require('./tools/shell')));
         const installResult = await executeCommand(`npm install -g ${pkg}`);
         if (installResult.exitCode !== 0) {
-            console.log(`\x1b[31mInstallation failed (exit ${installResult.exitCode}):\x1b[0m\n${installResult.stderr}\n`);
+            console.log(`${ui_1.C.red}  ✗ Installation failed (exit ${installResult.exitCode}):${ui_1.C.reset}\n  ${installResult.stderr}\n`);
             return;
         }
-        console.log(`\x1b[32m✓ Package installed\x1b[0m`);
+        console.log(`${ui_1.C.green}  ✓ Package installed${ui_1.C.reset}`);
         try {
             await mcpManager.installAndStartServer({
                 name,
@@ -516,17 +433,17 @@ async function handleMcpReplCommand(input, mcpManager) {
                 args: ['-y', pkg],
                 env: {},
             });
-            console.log(`\x1b[32m✓ MCP server \x1b[96m${name}\x1b[32m started and registered\x1b[0m\n`);
+            console.log(`${ui_1.C.green}  ✓ MCP server ${ui_1.C.reset}${ui_1.C.cyan}${name}${ui_1.C.reset}${ui_1.C.green} started and registered${ui_1.C.reset}\n`);
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            console.log(`\x1b[31mServer registered but failed to start: ${msg}\x1b[0m\n` +
-                'It was saved to config — it will be retried on next launch.\n');
+            console.log(`${ui_1.C.red}  ✗ Server registered but failed to start: ${msg}${ui_1.C.reset}\n` +
+                `${ui_1.C.gray}  It was saved to config — it will be retried on next launch.${ui_1.C.reset}\n`);
         }
         return;
     }
-    console.log('\x1b[31mUnknown /mcp subcommand.\x1b[0m\n' +
-        'Usage:\n  /mcp list\n  /mcp install <package> [name]\n');
+    console.log(`${ui_1.C.red}  ✗ Unknown /mcp subcommand.${ui_1.C.reset}\n` +
+        '  Usage:\n    /mcp list\n    /mcp install <package> [name]\n');
 }
 // ─── /penpot ──────────────────────────────────────────────────────────────────
 const PENPOT_SERVER_NAME = 'penpot';
@@ -536,26 +453,26 @@ async function handlePenpotCommand(input, mcpManager, memoryManager, rl) {
     const sub = parts[1]?.toLowerCase();
     if (!sub || sub === 'help') {
         console.log(`
-\x1b[96mPenpot MCP Integration\x1b[0m
+${ui_1.C.cyan}  Penpot MCP Integration${ui_1.C.reset}
 
-Penpot is an open-source design tool. IntelliCode can connect to Penpot's
-MCP server and autonomously create UI/UX designs, then generate code from them.
+  Penpot is an open-source design tool. IntelliCode can connect to Penpot's
+  MCP server and autonomously create UI/UX designs, then generate code.
 
-\x1b[96mCommands:\x1b[0m
-  /penpot connect   Set up the Penpot MCP connection (guided)
-  /penpot status    Show whether Penpot MCP is configured
-  /penpot help      Show this message
+${ui_1.C.cyan}  Commands:${ui_1.C.reset}
+    /penpot connect   Guided Penpot MCP setup
+    /penpot status    Show Penpot connection status
+    /penpot help      Show this message
 
-\x1b[96mWorkflow:\x1b[0m
-  1. Run \x1b[96m/penpot connect\x1b[0m and provide your Penpot access token.
-  2. Ask the agent to design something, e.g.:
-       "Design a login page and generate React code from the design"
-  3. The agent will create the design in Penpot, inspect it, and write
-     pixel-perfect code that matches the design.
+${ui_1.C.cyan}  Workflow:${ui_1.C.reset}
+    1. Run ${ui_1.C.cyan}/penpot connect${ui_1.C.reset} and provide your Penpot access token.
+    2. Ask the agent to design something, e.g.:
+         ${ui_1.C.gray}"Design a login page and generate React code from the design"${ui_1.C.reset}
+    3. The agent creates the design in Penpot, inspects it, and writes
+       pixel-perfect code that matches your design.
 
-\x1b[96mGet a Penpot token:\x1b[0m
-  Log in at \x1b[36mhttps://design.penpot.app\x1b[0m → Profile → Access tokens → New token
-  (For self-hosted Penpot, use your own base URL.)
+${ui_1.C.cyan}  Get a Penpot token:${ui_1.C.reset}
+    Log in at ${ui_1.C.cyanD}https://design.penpot.app${ui_1.C.reset} → Profile → Access tokens → New token
+    ${ui_1.C.gray}(For self-hosted Penpot, use your own base URL.)${ui_1.C.reset}
 `);
         return;
     }
@@ -564,18 +481,18 @@ MCP server and autonomously create UI/UX designs, then generate code from them.
         const penpot = configs.find((c) => c.name === PENPOT_SERVER_NAME);
         if (penpot) {
             const baseUrl = penpot.env?.['PENPOT_BASE_URL'] ?? PENPOT_DEFAULT_BASE_URL;
-            console.log(`\x1b[32m✓ Penpot MCP is configured\x1b[0m\n` +
-                `  Base URL : \x1b[96m${baseUrl}\x1b[0m\n` +
-                `  Token    : \x1b[90m(stored)\x1b[0m\n`);
+            console.log(`${ui_1.C.green}  ✓ Penpot MCP is configured${ui_1.C.reset}\n` +
+                `  Base URL : ${ui_1.C.cyan}${baseUrl}${ui_1.C.reset}\n` +
+                `  Token    : ${ui_1.C.gray}(stored)${ui_1.C.reset}\n`);
         }
         else {
-            console.log('\x1b[33m⚠  Penpot MCP is not configured.\x1b[0m\n' +
-                'Run \x1b[96m/penpot connect\x1b[0m to set it up.\n');
+            console.log(`${ui_1.C.yellow}  ⚠  Penpot MCP is not configured.${ui_1.C.reset}\n` +
+                `  Run ${ui_1.C.cyan}/penpot connect${ui_1.C.reset} to set it up.\n`);
         }
         return;
     }
     if (sub === 'connect') {
-        console.log('\n\x1b[96mPenpot MCP Setup\x1b[0m\n');
+        console.log(`\n${ui_1.C.cyan}  Penpot MCP Setup${ui_1.C.reset}\n`);
         // Try to load a previously stored token from long-term memory
         const storedToken = memoryManager.get('penpot_access_token');
         const storedBaseUrl = memoryManager.get('penpot_base_url') ?? PENPOT_DEFAULT_BASE_URL;
@@ -583,7 +500,7 @@ MCP server and autonomously create UI/UX designs, then generate code from them.
         let baseUrl = storedBaseUrl;
         await new Promise((resolve) => {
             const askBaseUrl = () => {
-                rl.question(`\x1b[90mPenpot base URL [${baseUrl}]:\x1b[0m `, (ans) => {
+                rl.question(`${ui_1.C.gray}  Penpot base URL [${baseUrl}]:${ui_1.C.reset} `, (ans) => {
                     const trimmed = ans.trim();
                     if (trimmed)
                         baseUrl = trimmed;
@@ -592,8 +509,8 @@ MCP server and autonomously create UI/UX designs, then generate code from them.
             };
             const askToken = () => {
                 // Don't reveal any characters of a stored token — just indicate one exists
-                const hint = token ? ' [token already set — press Enter to keep]' : '';
-                rl.question(`\x1b[90mPenpot access token${hint}:\x1b[0m `, (ans) => {
+                const hint = token ? `${ui_1.C.gray} [token already set — press Enter to keep]${ui_1.C.reset}` : '';
+                rl.question(`${ui_1.C.gray}  Penpot access token${ui_1.C.reset}${hint}${ui_1.C.gray}:${ui_1.C.reset} `, (ans) => {
                     const trimmed = ans.trim();
                     if (trimmed)
                         token = trimmed;
@@ -603,24 +520,24 @@ MCP server and autonomously create UI/UX designs, then generate code from them.
             askBaseUrl();
         });
         if (!token) {
-            console.log('\x1b[31m✗ No token provided. Penpot setup cancelled.\x1b[0m\n');
+            console.log(`${ui_1.C.red}  ✗ No token provided. Penpot setup cancelled.${ui_1.C.reset}\n`);
             return;
         }
         // Persist to long-term memory so future sessions reuse the credentials
         memoryManager.set('penpot_access_token', token);
         memoryManager.set('penpot_base_url', baseUrl);
-        console.log('\x1b[90mStarting Penpot MCP server…\x1b[0m');
+        console.log(`${ui_1.C.gray}  → Starting Penpot MCP server…${ui_1.C.reset}`);
         // ── Prerequisite: ensure pnpm is installed ────────────────────────────
         const { executeCommand: execCmd } = await Promise.resolve().then(() => __importStar(require('./tools/shell')));
         const pnpmCheck = await execCmd(`${(0, manager_1.resolveCommand)('pnpm')} --version`, undefined, 5000);
         if (pnpmCheck.exitCode !== 0) {
-            console.log('\x1b[90mpnpm not found — installing automatically…\x1b[0m');
+            console.log(`${ui_1.C.gray}  → pnpm not found — installing automatically…${ui_1.C.reset}`);
             const pnpmInstall = await execCmd(`${(0, manager_1.resolveCommand)('npm')} install -g pnpm`, undefined, 60000);
             if (pnpmInstall.exitCode === 0) {
-                console.log('\x1b[32m✓ pnpm installed\x1b[0m');
+                console.log(`${ui_1.C.green}  ✓ pnpm installed${ui_1.C.reset}`);
             }
             else {
-                console.log('\x1b[33m⚠  Could not install pnpm automatically — falling back to npx\x1b[0m');
+                console.log(`${ui_1.C.yellow}  ⚠  Could not install pnpm automatically — falling back to npx${ui_1.C.reset}`);
             }
         }
         try {
@@ -633,20 +550,20 @@ MCP server and autonomously create UI/UX designs, then generate code from them.
                     PENPOT_BASE_URL: baseUrl,
                 },
             });
-            console.log(`\x1b[32m✓ Penpot MCP connected!\x1b[0m\n` +
-                `  Base URL : \x1b[96m${baseUrl}\x1b[0m\n` +
-                `\n\x1b[90mYou can now ask the agent to design UI/UX and it will use Penpot.\x1b[0m\n`);
+            console.log(`${ui_1.C.green}  ✓ Penpot MCP connected!${ui_1.C.reset}\n` +
+                `  Base URL : ${ui_1.C.cyan}${baseUrl}${ui_1.C.reset}\n` +
+                `\n${ui_1.C.gray}  You can now ask the agent to design UI/UX and it will use Penpot.${ui_1.C.reset}\n`);
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            console.log(`\x1b[31m✗ Failed to start Penpot MCP server: ${msg}\x1b[0m\n` +
-                'The configuration was saved — it will be retried on the next launch.\n' +
-                'Make sure @penpot/mcp is accessible via npx (requires Node.js 18+).\n');
+            console.log(`${ui_1.C.red}  ✗ Failed to start Penpot MCP server: ${msg}${ui_1.C.reset}\n` +
+                `${ui_1.C.gray}  The configuration was saved — it will be retried on the next launch.\n` +
+                `  Make sure @penpot/mcp is accessible via npx (requires Node.js 18+).${ui_1.C.reset}\n`);
         }
         return;
     }
-    console.log('\x1b[31mUnknown /penpot subcommand.\x1b[0m\n' +
-        'Usage:\n  /penpot connect\n  /penpot status\n  /penpot help\n');
+    console.log(`${ui_1.C.red}  ✗ Unknown /penpot subcommand.${ui_1.C.reset}\n` +
+        '  Usage:\n    /penpot connect\n    /penpot status\n    /penpot help\n');
 }
 async function runSinglePrompt(prompt, planner) {
     try {
@@ -657,7 +574,7 @@ async function runSinglePrompt(prompt, planner) {
     }
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`\x1b[31mError: ${msg}\x1b[0m`);
+        console.error(`${ui_1.C.red}Error: ${msg}${ui_1.C.reset}`);
         process.exit(1);
     }
 }
@@ -668,7 +585,7 @@ async function authLogin() {
     }
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        console.error(`\x1b[31mAuthentication error: ${msg}\x1b[0m`);
+        console.error(`${ui_1.C.red}Authentication error: ${msg}${ui_1.C.reset}`);
         process.exit(1);
     }
 }
@@ -678,11 +595,11 @@ function authLogout() {
 function authStatusCmd() {
     const status = (0, github_copilot_1.authStatus)();
     if (!status.loggedIn) {
-        console.log('\x1b[31m✗ Not logged in.\x1b[0m\n' +
-            'Run \x1b[33mintellicode auth login\x1b[0m to authenticate.\n');
+        console.log(`${ui_1.C.red}  ✗ Not logged in.${ui_1.C.reset}\n` +
+            `  Run ${ui_1.C.cyan}intellicode auth login${ui_1.C.reset} to authenticate.\n`);
         return;
     }
-    console.log('\x1b[32m✓ Logged in to GitHub Copilot.\x1b[0m');
+    console.log(`${ui_1.C.green}  ✓ Logged in to GitHub Copilot.${ui_1.C.reset}`);
     if (status.tokenExpiry) {
         console.log(`  Session token expires: ${status.tokenExpiry.toLocaleString()}`);
     }
@@ -691,25 +608,25 @@ function authStatusCmd() {
 // ─── MCP commands ──────────────────────────────────────────────────────────────
 function mcpInit() {
     manager_1.McpManager.createSampleConfig();
-    console.log(`\nEdit \x1b[33m${manager_1.McpManager.getConfigPath()}\x1b[0m to add your MCP servers.\n`);
+    console.log(`\n  Edit ${ui_1.C.yellow}${manager_1.McpManager.getConfigPath()}${ui_1.C.reset} to add your MCP servers.\n`);
 }
 function mcpList() {
     const configPath = manager_1.McpManager.getConfigPath();
     try {
         if (!fs.existsSync(configPath)) {
-            console.log('\x1b[90mNo MCP config found. Run \x1b[0mintellicode mcp init\x1b[90m to create one.\x1b[0m\n');
+            console.log(`${ui_1.C.gray}  No MCP config found. Run ${ui_1.C.reset}intellicode mcp init${ui_1.C.gray} to create one.${ui_1.C.reset}\n`);
             return;
         }
         const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
         const servers = raw.servers ?? [];
         if (servers.length === 0) {
-            console.log('\x1b[90m(No MCP servers configured)\x1b[0m\n');
+            console.log(`${ui_1.C.gray}  ◦ No MCP servers configured.${ui_1.C.reset}\n`);
             return;
         }
-        console.log(`\x1b[96mConfigured MCP servers (${configPath}):\x1b[0m\n`);
+        console.log(`${ui_1.C.cyan}  Configured MCP servers (${configPath}):${ui_1.C.reset}\n`);
         for (const s of servers) {
             const cmd = [s.command, ...(s.args ?? [])].join(' ');
-            console.log(`  \x1b[96m${s.name}\x1b[0m  —  ${cmd}`);
+            console.log(`  ${ui_1.C.cyan}${s.name}${ui_1.C.reset}  ${ui_1.C.gray}—${ui_1.C.reset}  ${cmd}`);
         }
         console.log();
     }
@@ -729,8 +646,8 @@ async function main() {
         .action(async (prompt) => {
         // Guard: must be authenticated for agent features
         if (!(0, github_copilot_1.isLoggedIn)()) {
-            console.log('\x1b[33mYou are not logged in.\x1b[0m\n' +
-                'Run \x1b[96mintellicode auth login\x1b[0m first.\n');
+            console.log(`${ui_1.C.yellow}  You are not logged in.${ui_1.C.reset}\n` +
+                `  Run ${ui_1.C.cyan}intellicode auth login${ui_1.C.reset} first.\n`);
             process.exit(1);
         }
         // Start MCP servers
@@ -748,7 +665,7 @@ async function main() {
                 // Abort the current streaming request instead of exiting
                 activeAbortController.abort();
                 // activeAbortController is cleared by the finally block in runRepl
-                process.stdout.write('\n\x1b[90m(Response stopped — press Ctrl+C again to exit)\x1b[0m\n\n');
+                process.stdout.write(`\n${ui_1.C.gray}  (Response stopped — press Ctrl+C again to exit)${ui_1.C.reset}\n\n`);
             }
             else {
                 mcpManager.shutdown();
@@ -797,7 +714,7 @@ async function main() {
 }
 main().catch((err) => {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`\x1b[31mFatal error: ${msg}\x1b[0m`);
+    console.error(`${ui_1.C.red}Fatal error: ${msg}${ui_1.C.reset}`);
     process.exit(1);
 });
 //# sourceMappingURL=index.js.map
