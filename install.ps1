@@ -1,15 +1,19 @@
-# IntelliCode — One-line PowerShell installer
+# IntelliCode — Git-clone based PowerShell installer
 #
-# Usage (run in PowerShell as Administrator or regular user):
+# Usage (run in PowerShell):
 #   iex (iwr -useb https://raw.githubusercontent.com/HyunhoCho-dev/intellicode/main/install.ps1).Content
 #
 # What this script does:
 #   1. Checks for Node.js (>= 18), npm, and git
-#   2. Clones the repository to a temporary directory
-#   3. Installs intellicode globally via "npm install -g ." from the local clone
-#      (this strategy avoids the TAR_ENTRY_ERROR / ENOENT failures that occur
-#       when npm tries to extract a GitHub tarball on Windows)
-#   4. Verifies the installation
+#   2. Removes any previous global npm installation of intellicode
+#   3. Clones the repository to ~/intellicode (or updates it if already present)
+#   4. Runs "npm install" inside the cloned directory to get dependencies
+#   5. Runs "npm run build" if dist/index.js is missing
+#   6. Creates wrapper scripts (intellicode.cmd + intellicode.ps1) in ~/intellicode/bin/
+#   7. Adds ~/intellicode/bin to the User PATH environment variable
+#
+# This strategy completely avoids "npm install -g" (and the TAR_ENTRY_ERROR /
+# MODULE_NOT_FOUND failures it causes on Windows).
 #
 # NOTE: All exit paths use 'return' (not 'exit') so this script is safe to run
 # via iex without closing the calling PowerShell session.
@@ -18,8 +22,10 @@ function Install-Intellicode {
 [CmdletBinding()]
 param()
 
-$Repo  = "HyunhoCho-dev/intellicode"
-$Cmd   = "intellicode"
+$Repo       = "HyunhoCho-dev/intellicode"
+$Cmd        = "intellicode"
+$InstallDir = [System.IO.Path]::Combine($HOME, "intellicode")
+$BinDir     = [System.IO.Path]::Combine($InstallDir, "bin")
 
 function Write-Step([string]$msg) {
     Write-Host ""
@@ -95,170 +101,211 @@ if (-not $gitPath) {
 $gitVersion = & git --version 2>&1
 Write-Success "$gitVersion detected"
 
-# ─── Uninstall any previous version ──────────────────────────────────────────
-
-$existingCmd = Get-Command $Cmd -ErrorAction SilentlyContinue
-if ($existingCmd) {
-    Write-Step "Removing previous installation..."
-    & npm uninstall -g intellicode 2>&1 | Out-Null
-    Write-Success "Previous version removed"
-}
-
-# ─── Clone repository to a temporary directory ───────────────────────────────
+# ─── Remove any previous global npm installation ──────────────────────────────
 #
-# Using "git clone + npm install -g ." instead of "npm install -g github:..."
-# avoids TAR_ENTRY_ERROR / ENOENT failures on Windows, where npm's tarball
-# extractor can fail to create nested subdirectories (e.g. dist/tools/).
+# Previous install attempts used "npm install -g github:..." or "npm install -g ."
+# which caused TAR_ENTRY_ERROR / MODULE_NOT_FOUND on Windows.  Clean them up so
+# the old broken wrapper does not shadow the new one.
 
-$tempDir = Join-Path $env:TEMP "intellicode-install-$([System.IO.Path]::GetRandomFileName())"
-
-Write-Step "Cloning repository..."
-Write-Host "  (Cloning: https://github.com/$Repo)" -ForegroundColor DarkGray
-Write-Host ""
-
-$cloneOutput = & git clone --depth=1 "https://github.com/$Repo.git" $tempDir 2>&1
-$cloneOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-
-if ($LASTEXITCODE -ne 0) {
-    Write-Host ""
-    Write-Fail "Failed to clone repository (exit code $LASTEXITCODE)."
-    Write-Host ""
-    Write-Host "  Make sure you have an internet connection and try again." -ForegroundColor Yellow
-    if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue }
-    Read-Host "  Press Enter to close"
-    return
+$prevGlobal = & npm list -g --depth=0 intellicode 2>&1
+if ($prevGlobal -match "intellicode@") {
+    Write-Step "Removing previous global npm installation..."
+    & npm uninstall -g intellicode 2>&1 | Out-Null
+    Write-Success "Previous global version removed"
 }
-Write-Success "Repository cloned to temporary directory"
 
-# ─── Install from local clone ─────────────────────────────────────────────────
+# ─── Clone or update the repository ──────────────────────────────────────────
+#
+# We clone to a *permanent* directory (~\intellicode) instead of a temp dir so
+# that "npm install -g ." is never needed — wrapper scripts will call node
+# directly against the local dist/index.js.
 
-Write-Step "Installing intellicode..."
-Write-Host "  (Running: npm install -g . from local clone)" -ForegroundColor DarkGray
+$gitDir = [System.IO.Path]::Combine($InstallDir, ".git")
+
+if (Test-Path $gitDir) {
+    Write-Step "Updating existing installation at $InstallDir ..."
+    $locationChanged = $false
+    try {
+        Push-Location $InstallDir
+        $locationChanged = $true
+        $pullOutput = & git pull --ff-only 2>&1
+        $pullOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  git pull failed — performing a fresh clone instead." -ForegroundColor Yellow
+            Pop-Location
+            $locationChanged = $false
+            Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
+        } else {
+            Write-Success "Repository updated"
+        }
+    } catch {
+        Write-Host "  Update failed: $_ — performing a fresh clone instead." -ForegroundColor Yellow
+        if ($locationChanged) { Pop-Location; $locationChanged = $false }
+        Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
+    } finally {
+        if ($locationChanged) { Pop-Location }
+    }
+}
+
+if (-not (Test-Path $gitDir)) {
+    Write-Step "Cloning repository to $InstallDir ..."
+    Write-Host "  (Cloning: https://github.com/$Repo)" -ForegroundColor DarkGray
+    Write-Host ""
+
+    if (Test-Path $InstallDir) {
+        Remove-Item -Recurse -Force $InstallDir -ErrorAction SilentlyContinue
+    }
+
+    $cloneOutput = & git clone --depth=1 "https://github.com/$Repo.git" $InstallDir 2>&1
+    $cloneOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host ""
+        Write-Fail "Failed to clone repository (exit code $LASTEXITCODE)."
+        Write-Host ""
+        Write-Host "  Make sure you have an internet connection and try again." -ForegroundColor Yellow
+        Read-Host "  Press Enter to close"
+        return
+    }
+    Write-Success "Repository cloned to $InstallDir"
+}
+
+# ─── Install npm dependencies ─────────────────────────────────────────────────
+
+Write-Step "Installing npm dependencies..."
+Write-Host "  (Running: npm install inside $InstallDir)" -ForegroundColor DarkGray
 Write-Host ""
 
-$installFailed = $false
 $locationChanged = $false
 try {
-    Push-Location $tempDir
+    Push-Location $InstallDir
     $locationChanged = $true
-    $npmOutput = & npm install -g . 2>&1
+    $npmOutput = & npm install 2>&1
     $npmOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     if ($LASTEXITCODE -ne 0) {
-        $installFailed = $true
+        Write-Fail "npm install failed (exit code $LASTEXITCODE)."
+        Read-Host "  Press Enter to close"
+        return
     }
+    Write-Success "npm dependencies installed"
 } catch {
-    Write-Host ""
-    Write-Fail "Installation failed: $_"
-    Write-Host ""
-    Write-Host "  If you see permission errors, try running as Administrator." -ForegroundColor Yellow
-    if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue }
+    Write-Fail "npm install failed: $_"
     Read-Host "  Press Enter to close"
     return
 } finally {
     if ($locationChanged) { Pop-Location }
 }
 
-if ($installFailed) {
-    if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue }
+# ─── Build (only if dist/index.js is absent) ──────────────────────────────────
+
+$distEntry = [System.IO.Path]::Combine($InstallDir, "dist", "index.js")
+
+if (-not (Test-Path $distEntry)) {
+    Write-Step "Building from source (dist/ not found in repository)..."
+    Write-Host "  (Running: npm run build inside $InstallDir)" -ForegroundColor DarkGray
     Write-Host ""
-    Write-Fail "npm exited with code $LASTEXITCODE"
+
+    $locationChanged = $false
+    try {
+        Push-Location $InstallDir
+        $locationChanged = $true
+        $buildOutput = & npm run build 2>&1
+        $buildOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  Build exited with code $LASTEXITCODE." -ForegroundColor Yellow
+        } else {
+            Write-Success "Build complete"
+        }
+    } catch {
+        Write-Host "  Build step skipped: $_" -ForegroundColor DarkGray
+    } finally {
+        if ($locationChanged) { Pop-Location }
+    }
+} else {
+    Write-Success "dist/index.js already present — skipping build"
+}
+
+# Abort if entry point is still missing after optional build
+if (-not (Test-Path $distEntry)) {
+    Write-Fail "dist/index.js not found at: $distEntry"
     Write-Host ""
-    Write-Host "  Common fixes:" -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "  1. Run PowerShell as Administrator and try again." -ForegroundColor Yellow
-    Write-Host "  2. If you see EACCES/EPERM errors, fix npm permissions:" -ForegroundColor Yellow
-    Write-Host "       https://docs.npmjs.com/resolving-eacces-permissions-errors" -ForegroundColor Yellow
-    Write-Host "  3. If you see network errors, check your internet connection." -ForegroundColor Yellow
-    Write-Host ""
+    Write-Host "  The build step did not produce dist/index.js." -ForegroundColor Yellow
+    Write-Host "  Please open an issue at https://github.com/$Repo/issues" -ForegroundColor Yellow
     Read-Host "  Press Enter to close"
     return
 }
+Write-Success "Entry point confirmed: $distEntry"
 
-# ─── TAR extraction workaround ────────────────────────────────────────────────
+# ─── Create wrapper scripts ───────────────────────────────────────────────────
 #
-# On Windows, npm's internal tar extractor can produce TAR_ENTRY_ERROR / ENOENT
-# when creating nested subdirectories (e.g. dist/tools/).  If dist/index.js is
-# missing from the globally installed package after "npm install -g .", copy the
-# dist/ folder directly from the temporary clone before cleaning up.
+# Instead of relying on "npm install -g" (which keeps failing on this machine),
+# we drop a tiny .cmd and .ps1 wrapper into ~/intellicode/bin/ that forward
+# all arguments to "node dist/index.js" in the cloned directory.
 
-$globalPrefix = (& npm config get prefix 2>$null | Out-String).Trim()
-if ($globalPrefix) {
-    $installedEntry = [System.IO.Path]::Combine($globalPrefix, "node_modules", $Cmd, "dist", "index.js")
-    if (-not (Test-Path $installedEntry)) {
-        Write-Host "  Applying Windows compatibility patch (copying dist/ directly)..." -ForegroundColor DarkGray
-        $pkgDir = [System.IO.Path]::Combine($globalPrefix, "node_modules", $Cmd)
-        if (Test-Path $pkgDir) {
-            $destDist = [System.IO.Path]::Combine($pkgDir, "dist")
-            if (-not (Test-Path $destDist)) { New-Item -ItemType Directory -Path $destDist -Force | Out-Null }
-            $srcDist = Join-Path $tempDir "dist"
-            if (Test-Path $srcDist) { Copy-Item -Recurse -Force "$srcDist\*" $destDist }
-        }
-    }
+Write-Step "Creating wrapper scripts in $BinDir ..."
+
+if (-not (Test-Path $BinDir)) {
+    New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 }
 
-# Clean up temporary clone
-if (Test-Path $tempDir) { Remove-Item -Recurse -Force $tempDir -ErrorAction SilentlyContinue }
+# .cmd wrapper — used by cmd.exe and older PowerShell sessions
+$cmdWrapper = [System.IO.Path]::Combine($BinDir, "$Cmd.cmd")
+@"
+@echo off
+node "$InstallDir\dist\index.js" %*
+"@ | Set-Content -Path $cmdWrapper -Encoding ASCII -Force
 
-# ─── Refresh PATH so the new binary is visible in this session ────────────────
+# .ps1 wrapper — used by modern PowerShell sessions
+$ps1Wrapper = [System.IO.Path]::Combine($BinDir, "$Cmd.ps1")
+@"
+& node "$InstallDir\dist\index.js" @args
+"@ | Set-Content -Path $ps1Wrapper -Encoding UTF8 -Force
 
-# On Windows, npm places global bin scripts directly in the prefix directory.
-# 'npm config get prefix' works with all npm versions (unlike the deprecated 'npm bin -g').
-$npmGlobalBin = (& npm config get prefix 2>$null | Out-String).Trim()
-if ($npmGlobalBin -and (Test-Path $npmGlobalBin)) {
-    if (($env:PATH -split ';') -notcontains $npmGlobalBin) {
-        $env:PATH = "$npmGlobalBin;$env:PATH"
-    }
+Write-Success "Wrapper scripts created"
+
+# ─── Add bin/ to User PATH ────────────────────────────────────────────────────
+
+Write-Step "Updating PATH environment variable..."
+
+$userPath  = [Environment]::GetEnvironmentVariable("PATH", "User")
+$pathParts = ($userPath -split ";") | Where-Object { $_ -ne "" }
+
+if ($pathParts -notcontains $BinDir) {
+    $newUserPath = ($pathParts + $BinDir) -join ";"
+    [Environment]::SetEnvironmentVariable("PATH", $newUserPath, "User")
+    Write-Success "Added $BinDir to User PATH"
+    Write-Host "  (You may need to open a new terminal window for this to take effect)" -ForegroundColor DarkGray
+} else {
+    Write-Success "$BinDir is already in User PATH"
+}
+
+# Also update PATH in the current session so the command is available immediately
+if (($env:PATH -split ";") -notcontains $BinDir) {
+    $env:PATH = "$BinDir;$env:PATH"
 }
 
 # ─── Verify ───────────────────────────────────────────────────────────────────
 
 Write-Step "Verifying installation..."
 
-# Verify that the dist/index.js entry point is present in the installed package.
-$npmGlobalModules = (& npm config get prefix 2>$null | Out-String).Trim()
-if ($npmGlobalModules -and (Test-Path $npmGlobalModules)) {
-    $entryPoint = [System.IO.Path]::Combine($npmGlobalModules, "node_modules", $Cmd, "dist", "index.js")
-    if (-not (Test-Path $entryPoint)) {
-        Write-Fail "Entry point not found: $entryPoint"
-        Write-Host ""
-        Write-Host "  The dist/index.js file is missing from the installed package." -ForegroundColor Yellow
-        Write-Host "  Try running this installer again, or install manually:" -ForegroundColor Yellow
-        Write-Host "    git clone https://github.com/$Repo.git" -ForegroundColor Cyan
-        Write-Host "    cd intellicode" -ForegroundColor Cyan
-        Write-Host "    npm install -g ." -ForegroundColor Cyan
-        Read-Host "  Press Enter to close"
-        return
-    }
-    Write-Success "Entry point verified: dist/index.js"
-}
-
-$intellicodePath = Get-Command $Cmd -ErrorAction SilentlyContinue
-if (-not $intellicodePath) {
-    Write-Fail "intellicode command not found in PATH after installation."
-    Write-Host ""
-    Write-Host "  The package was installed but the command is not in your PATH." -ForegroundColor Yellow
-    Write-Host "  Run the following to find the npm global directory:" -ForegroundColor Yellow
-    Write-Host "    npm config get prefix" -ForegroundColor Cyan
-    Write-Host "  Then add that directory to your PATH environment variable," -ForegroundColor Yellow
-    Write-Host "  or open a new PowerShell window and try 'intellicode --help'." -ForegroundColor Yellow
-    Read-Host "  Press Enter to close"
-    return
-}
-
-Write-Success "intellicode installed at $($intellicodePath.Source)"
-
-# Confirm intellicode --version actually works (catches MODULE_NOT_FOUND at this point)
-$versionOutput = & intellicode --version 2>&1
+# Run directly via node to bypass any stale PATH cache in this session
+$versionOutput = & node $distEntry --version 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Write-Fail "intellicode --version failed: $versionOutput"
+    Write-Fail "Verification failed: $versionOutput"
     Write-Host ""
-    Write-Host "  The command was installed but cannot run. Try:" -ForegroundColor Yellow
-    Write-Host "    npm uninstall -g intellicode" -ForegroundColor Cyan
-    Write-Host "    git clone https://github.com/$Repo.git && cd intellicode && npm install -g ." -ForegroundColor Cyan
+    Write-Host "  The tool was installed but cannot run." -ForegroundColor Yellow
+    Write-Host "  Please open an issue at https://github.com/$Repo/issues" -ForegroundColor Yellow
     Read-Host "  Press Enter to close"
     return
 }
 Write-Success "intellicode --version: $versionOutput"
+
+$intellicodePath = Get-Command $Cmd -ErrorAction SilentlyContinue
+if ($intellicodePath) {
+    Write-Success "intellicode found at $($intellicodePath.Source)"
+} else {
+    Write-Host "  (intellicode not yet in PATH for this session — open a new terminal)" -ForegroundColor DarkGray
+}
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
@@ -266,6 +313,9 @@ Write-Host ""
 Write-Host "  ─────────────────────────────────────────────────" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  Installation complete!" -ForegroundColor Green
+Write-Host "  Installed to: $InstallDir" -ForegroundColor DarkGray
+Write-Host ""
+Write-Host "  NOTE: If 'intellicode' is not recognized, open a new terminal window." -ForegroundColor Yellow
 Write-Host ""
 Write-Host "  Get started:" -ForegroundColor White
 Write-Host ""
