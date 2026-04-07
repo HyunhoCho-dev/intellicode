@@ -132,6 +132,25 @@ if ($npmGlobalBin -and (Test-Path $npmGlobalBin)) {
 
 Write-Step "Verifying installation..."
 
+# Verify that the dist/index.js entry point was included in the installed package.
+# This catches the MODULE_NOT_FOUND error before the user runs intellicode.
+$npmGlobalModules = (& npm config get prefix 2>$null | Out-String).Trim()
+if ($npmGlobalModules -and (Test-Path $npmGlobalModules)) {
+    $entryPoint = Join-Path $npmGlobalModules (Join-Path "node_modules" (Join-Path "intellicode" (Join-Path "dist" "index.js")))
+    if (-not (Test-Path $entryPoint)) {
+        Write-Fail "Entry point not found: $entryPoint"
+        Write-Host ""
+        Write-Host "  The dist/index.js file is missing from the installed package." -ForegroundColor Yellow
+        Write-Host "  This indicates a corrupted or incomplete installation." -ForegroundColor Yellow
+        Write-Host "  Try uninstalling and reinstalling:" -ForegroundColor Yellow
+        Write-Host "    npm uninstall -g intellicode" -ForegroundColor Cyan
+        Write-Host "    npm install -g github:$Repo" -ForegroundColor Cyan
+        Read-Host "  Press Enter to close"
+        return
+    }
+    Write-Success "Entry point verified: dist/index.js"
+}
+
 $intellicodePath = Get-Command $Cmd -ErrorAction SilentlyContinue
 if (-not $intellicodePath) {
     Write-Fail "intellicode command not found in PATH after installation."
