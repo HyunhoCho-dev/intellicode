@@ -6,7 +6,7 @@
  *
  * Color palette  : sky-blue / cyan as the primary brand accent
  * Box style       : rounded corners (╭ ╮ ╰ ╯) with thin lines
- * Width           : 62 columns outer / 58 columns inner content
+ * Width           : 72 columns outer / 70 columns inner content
  */
 export declare const C: {
     readonly cyan: "\u001B[96m";

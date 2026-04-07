@@ -7,7 +7,7 @@
  *
  * Color palette  : sky-blue / cyan as the primary brand accent
  * Box style       : rounded corners (╭ ╮ ╰ ╯) with thin lines
- * Width           : 62 columns outer / 58 columns inner content
+ * Width           : 72 columns outer / 70 columns inner content
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.PROMPT = exports.C = void 0;
@@ -43,7 +43,7 @@ function padTo(s, width) {
 }
 /** A single box content row: │ ‹space› content ‹padding› ‹space› │  */
 function boxLine(content = '') {
-    // inner layout: 1 space + content + padding + 1 space  =  BOX_INNER (60)
+    // inner layout: 1 space + content + padding + 1 space  =  BOX_INNER (70)
     const padded = padTo(content, BOX_INNER - 2);
     return `${exports.C.cyan}│${exports.C.reset} ${padded} ${exports.C.cyan}│${exports.C.reset}`;
 }
@@ -184,7 +184,7 @@ function printHelp() {
     // ── Response control ──
     console.log(`  ${boxTop('Response Control')}`);
     console.log(`  ${row('Ctrl+C', 'Stop the current response mid-stream')}`);
-    console.log(`  ${boxLine(`  ${note('A')} ${cmd('⠋ Thinking…')} ${note('spinner is shown while the model generates')}`)}`);
+    console.log(`  ${boxLine(`  ${note('The')} ${cmd('⠋ Thinking…')} ${note('spinner is shown while the model generates')}`)}`);
     console.log(`  ${boxBottom()}`);
     process.stdout.write('\n');
     // ── Model & Reasoning ──
