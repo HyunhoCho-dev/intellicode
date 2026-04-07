@@ -1,0 +1,14 @@
+# Source files — only the compiled dist/ output is needed by consumers
+src/
+tsconfig.json
+
+# Installer script — not part of the npm package
+*.ps1
+
+# Development / CI artefacts
+.github/
+*.log
+.env
+.DS_Store
+Thumbs.db
+node_modules/
