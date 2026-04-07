@@ -182,7 +182,7 @@ async function runRepl(planner, mcpManager, memoryManager) {
         // ── /penpot command ───────────────────────────────────────────────────────
         if (input.startsWith('/penpot')) {
             rl.pause();
-            await handlePenpotCommand(input, mcpManager, memoryManager);
+            await handlePenpotCommand(input, mcpManager, memoryManager, rl);
             rl.resume();
             rl.prompt();
             return;
@@ -519,7 +519,7 @@ async function handleMcpReplCommand(input, mcpManager) {
 // ─── /penpot ──────────────────────────────────────────────────────────────────
 const PENPOT_SERVER_NAME = 'penpot';
 const PENPOT_DEFAULT_BASE_URL = 'https://design.penpot.app';
-async function handlePenpotCommand(input, mcpManager, memoryManager) {
+async function handlePenpotCommand(input, mcpManager, memoryManager, rl) {
     const parts = input.split(/\s+/);
     const sub = parts[1]?.toLowerCase();
     if (!sub || sub === 'help') {
@@ -570,10 +570,6 @@ MCP server and autonomously create UI/UX designs, then generate code from them.
         let token = storedToken ?? '';
         let baseUrl = storedBaseUrl;
         await new Promise((resolve) => {
-            const rl = readline.createInterface({
-                input: process.stdin,
-                output: process.stdout,
-            });
             const askBaseUrl = () => {
                 rl.question(`\x1b[90mPenpot base URL [${baseUrl}]:\x1b[0m `, (ans) => {
                     const trimmed = ans.trim();
@@ -589,7 +585,6 @@ MCP server and autonomously create UI/UX designs, then generate code from them.
                     const trimmed = ans.trim();
                     if (trimmed)
                         token = trimmed;
-                    rl.close();
                     resolve();
                 });
             };
