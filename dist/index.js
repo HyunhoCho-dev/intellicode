@@ -66,6 +66,28 @@ try {
 catch {
     // use default
 }
+// ─── Active streaming state ────────────────────────────────────────────────────
+// Shared between runRepl and the SIGINT handler registered in main().
+/** Non-null while the agent is streaming a response. */
+let activeAbortController = null;
+// ─── Spinner ──────────────────────────────────────────────────────────────────
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+function createSpinner() {
+    let idx = 0;
+    // Write initial frame immediately
+    process.stdout.write(`\r\x1b[96m${SPINNER_FRAMES[0]} Thinking…\x1b[0m`);
+    const interval = setInterval(() => {
+        idx = (idx + 1) % SPINNER_FRAMES.length;
+        process.stdout.write(`\r\x1b[96m${SPINNER_FRAMES[idx]} Thinking…\x1b[0m`);
+    }, 80);
+    return {
+        stop: () => {
+            clearInterval(interval);
+            // Erase the spinner line so the model response starts cleanly
+            process.stdout.write('\r\x1b[2K');
+        },
+    };
+}
 // ─── Banner ────────────────────────────────────────────────────────────────────
 function printBanner() {
     console.log(`
@@ -157,18 +179,44 @@ async function runRepl(planner, mcpManager, memoryManager) {
             rl.prompt();
             return;
         }
+        // ── /penpot command ───────────────────────────────────────────────────────
+        if (input.startsWith('/penpot')) {
+            rl.pause();
+            await handlePenpotCommand(input, mcpManager, memoryManager);
+            rl.resume();
+            rl.prompt();
+            return;
+        }
         // ── Regular prompt ────────────────────────────────────────────────────────
         rl.pause();
         process.stdout.write('\n');
+        // Start the "Thinking…" spinner before the first token arrives
+        const spinner = createSpinner();
+        let spinnerStopped = false;
+        const stopSpinnerOnce = () => {
+            if (!spinnerStopped) {
+                spinnerStopped = true;
+                spinner.stop();
+            }
+        };
+        // Create an abort controller so Ctrl+C can cancel this request
+        activeAbortController = new AbortController();
+        const { signal } = activeAbortController;
         try {
             await planner.run(input, (token) => {
+                stopSpinnerOnce();
                 process.stdout.write(token);
-            });
+            }, signal);
+            stopSpinnerOnce();
             process.stdout.write('\n\n');
         }
         catch (err) {
+            stopSpinnerOnce();
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`\n\x1b[31mError: ${msg}\x1b[0m\n`);
+        }
+        finally {
+            activeAbortController = null;
         }
         rl.resume();
         rl.prompt();
@@ -186,6 +234,10 @@ function printReplHelp() {
     /clear, /reset   Clear conversation context
     /history         Show number of messages in context
     /exit, /quit     Quit intellicode
+
+  \x1b[96mResponse control\x1b[0m
+    Ctrl+C           Stop the current response mid-stream (press again to exit)
+    (A \x1b[96m⠋ Thinking…\x1b[0m spinner is shown while the model is generating)
 
   \x1b[96mModel & Reasoning\x1b[0m
     /models          List available models and select one interactively
@@ -208,6 +260,13 @@ function printReplHelp() {
     /mcp install <pkg> [name]
                      Install an npm MCP package and register it
                      Example: /mcp install @modelcontextprotocol/server-brave-search brave-search
+
+  \x1b[96mPenpot Design Integration\x1b[0m
+    /penpot connect  Connect to Penpot MCP (guided setup with token prompt)
+    /penpot status   Show current Penpot connection status
+    /penpot help     Show Penpot workflow tips
+    (You can also just ask the agent to "design a login page" and it will
+    automatically configure the Penpot MCP server and use it.)
 
   \x1b[96mMaintenance\x1b[0m
     /update          Pull latest changes, install deps, and rebuild
@@ -457,7 +516,118 @@ async function handleMcpReplCommand(input, mcpManager) {
     console.log('\x1b[31mUnknown /mcp subcommand.\x1b[0m\n' +
         'Usage:\n  /mcp list\n  /mcp install <package> [name]\n');
 }
-// ─── Single-shot prompt ─────────────────────────────────────────────────────────
+// ─── /penpot ──────────────────────────────────────────────────────────────────
+const PENPOT_SERVER_NAME = 'penpot';
+const PENPOT_DEFAULT_BASE_URL = 'https://design.penpot.app';
+async function handlePenpotCommand(input, mcpManager, memoryManager) {
+    const parts = input.split(/\s+/);
+    const sub = parts[1]?.toLowerCase();
+    if (!sub || sub === 'help') {
+        console.log(`
+\x1b[96mPenpot MCP Integration\x1b[0m
+
+Penpot is an open-source design tool. IntelliCode can connect to Penpot's
+MCP server and autonomously create UI/UX designs, then generate code from them.
+
+\x1b[96mCommands:\x1b[0m
+  /penpot connect   Set up the Penpot MCP connection (guided)
+  /penpot status    Show whether Penpot MCP is configured
+  /penpot help      Show this message
+
+\x1b[96mWorkflow:\x1b[0m
+  1. Run \x1b[96m/penpot connect\x1b[0m and provide your Penpot access token.
+  2. Ask the agent to design something, e.g.:
+       "Design a login page and generate React code from the design"
+  3. The agent will create the design in Penpot, inspect it, and write
+     pixel-perfect code that matches the design.
+
+\x1b[96mGet a Penpot token:\x1b[0m
+  Log in at \x1b[36mhttps://design.penpot.app\x1b[0m → Profile → Access tokens → New token
+  (For self-hosted Penpot, use your own base URL.)
+`);
+        return;
+    }
+    if (sub === 'status') {
+        const configs = mcpManager.getConfigs();
+        const penpot = configs.find((c) => c.name === PENPOT_SERVER_NAME);
+        if (penpot) {
+            const baseUrl = penpot.env?.['PENPOT_BASE_URL'] ?? PENPOT_DEFAULT_BASE_URL;
+            console.log(`\x1b[32m✓ Penpot MCP is configured\x1b[0m\n` +
+                `  Base URL : \x1b[96m${baseUrl}\x1b[0m\n` +
+                `  Token    : \x1b[90m(stored)\x1b[0m\n`);
+        }
+        else {
+            console.log('\x1b[33m⚠  Penpot MCP is not configured.\x1b[0m\n' +
+                'Run \x1b[96m/penpot connect\x1b[0m to set it up.\n');
+        }
+        return;
+    }
+    if (sub === 'connect') {
+        console.log('\n\x1b[96mPenpot MCP Setup\x1b[0m\n');
+        // Try to load a previously stored token from long-term memory
+        const storedToken = memoryManager.get('penpot_access_token');
+        const storedBaseUrl = memoryManager.get('penpot_base_url') ?? PENPOT_DEFAULT_BASE_URL;
+        let token = storedToken ?? '';
+        let baseUrl = storedBaseUrl;
+        await new Promise((resolve) => {
+            const rl = readline.createInterface({
+                input: process.stdin,
+                output: process.stdout,
+            });
+            const askBaseUrl = () => {
+                rl.question(`\x1b[90mPenpot base URL [${baseUrl}]:\x1b[0m `, (ans) => {
+                    const trimmed = ans.trim();
+                    if (trimmed)
+                        baseUrl = trimmed;
+                    askToken();
+                });
+            };
+            const askToken = () => {
+                // Don't reveal any characters of a stored token — just indicate one exists
+                const hint = token ? ' [token already set — press Enter to keep]' : '';
+                rl.question(`\x1b[90mPenpot access token${hint}:\x1b[0m `, (ans) => {
+                    const trimmed = ans.trim();
+                    if (trimmed)
+                        token = trimmed;
+                    rl.close();
+                    resolve();
+                });
+            };
+            askBaseUrl();
+        });
+        if (!token) {
+            console.log('\x1b[31m✗ No token provided. Penpot setup cancelled.\x1b[0m\n');
+            return;
+        }
+        // Persist to long-term memory so future sessions reuse the credentials
+        memoryManager.set('penpot_access_token', token);
+        memoryManager.set('penpot_base_url', baseUrl);
+        console.log('\x1b[90mStarting Penpot MCP server…\x1b[0m');
+        try {
+            await mcpManager.installAndStartServer({
+                name: PENPOT_SERVER_NAME,
+                command: 'npx',
+                args: ['-y', '@penpot/mcp'],
+                env: {
+                    PENPOT_ACCESS_TOKEN: token,
+                    PENPOT_BASE_URL: baseUrl,
+                },
+            });
+            console.log(`\x1b[32m✓ Penpot MCP connected!\x1b[0m\n` +
+                `  Base URL : \x1b[96m${baseUrl}\x1b[0m\n` +
+                `\n\x1b[90mYou can now ask the agent to design UI/UX and it will use Penpot.\x1b[0m\n`);
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.log(`\x1b[31m✗ Failed to start Penpot MCP server: ${msg}\x1b[0m\n` +
+                'The configuration was saved — it will be retried on the next launch.\n' +
+                'Make sure @penpot/mcp is accessible via npx (requires Node.js 18+).\n');
+        }
+        return;
+    }
+    console.log('\x1b[31mUnknown /penpot subcommand.\x1b[0m\n' +
+        'Usage:\n  /penpot connect\n  /penpot status\n  /penpot help\n');
+}
 async function runSinglePrompt(prompt, planner) {
     try {
         await planner.run(prompt, (token) => {
@@ -551,10 +721,19 @@ async function main() {
         // Load long-term memory
         const memoryManager = new manager_2.MemoryManager();
         const planner = new planner_1.Planner(mcpManager, memoryManager, model, thinkLevel);
-        // Graceful shutdown
+        // Graceful shutdown — Ctrl+C aborts an in-progress response; a second
+        // Ctrl+C (when nothing is streaming) exits the process.
         process.on('SIGINT', () => {
-            mcpManager.shutdown();
-            process.exit(0);
+            if (activeAbortController) {
+                // Abort the current streaming request instead of exiting
+                activeAbortController.abort();
+                // activeAbortController is cleared by the finally block in runRepl
+                process.stdout.write('\n\x1b[90m(Response stopped — press Ctrl+C again to exit)\x1b[0m\n\n');
+            }
+            else {
+                mcpManager.shutdown();
+                process.exit(0);
+            }
         });
         process.on('SIGTERM', () => {
             mcpManager.shutdown();

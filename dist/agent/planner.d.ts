@@ -37,8 +37,9 @@ export declare class Planner {
      *
      * @param userMessage  The user's input.
      * @param onToken      Callback for streaming text tokens.
+     * @param signal       Optional AbortSignal to interrupt the response mid-stream.
      */
-    run(userMessage: string, onToken: (token: string) => void): Promise<void>;
+    run(userMessage: string, onToken: (token: string) => void, signal?: AbortSignal): Promise<void>;
     /** Map think level to LLM sampling parameters. */
     private getThinkParams;
     /** Return a human-readable description of the current think level settings. */

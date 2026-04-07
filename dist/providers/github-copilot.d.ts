@@ -57,15 +57,16 @@ export declare function logout(): void;
 /**
  * Stream a chat completion from the Copilot API.
  *
- * @param messages   Conversation history.
- * @param tools      Optional tool definitions (OpenAI function-calling format).
- * @param onChunk    Called with each text chunk as it arrives.
- * @param model      Model ID to use (default: 'gpt-4o').
+ * @param messages    Conversation history.
+ * @param tools       Optional tool definitions (OpenAI function-calling format).
+ * @param onChunk     Called with each text chunk as it arrives.
+ * @param model       Model ID to use (default: 'gpt-4o').
  * @param temperature Sampling temperature (default: 0.1).
- * @param maxTokens  Maximum tokens in the response (default: 4096).
- * @returns          Full assembled response (content + tool_calls).
+ * @param maxTokens   Maximum tokens in the response (default: 4096).
+ * @param signal      Optional AbortSignal to cancel the in-flight request.
+ * @returns           Full assembled response (content + tool_calls).
  */
-export declare function streamChatCompletion(messages: Message[], tools: ToolDefinition[], onChunk: (chunk: string) => void, model?: string, temperature?: number, maxTokens?: number): Promise<ChatCompletionResponse>;
+export declare function streamChatCompletion(messages: Message[], tools: ToolDefinition[], onChunk: (chunk: string) => void, model?: string, temperature?: number, maxTokens?: number, signal?: AbortSignal): Promise<ChatCompletionResponse>;
 /** Fetch available Copilot models (for diagnostics / future use). */
 export declare function listModels(): Promise<string[]>;
 /** Return the path to the config file (used for diagnostic output). */

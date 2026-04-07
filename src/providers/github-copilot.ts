@@ -328,13 +328,14 @@ function generateMachineId(): string {
 /**
  * Stream a chat completion from the Copilot API.
  *
- * @param messages   Conversation history.
- * @param tools      Optional tool definitions (OpenAI function-calling format).
- * @param onChunk    Called with each text chunk as it arrives.
- * @param model      Model ID to use (default: 'gpt-4o').
+ * @param messages    Conversation history.
+ * @param tools       Optional tool definitions (OpenAI function-calling format).
+ * @param onChunk     Called with each text chunk as it arrives.
+ * @param model       Model ID to use (default: 'gpt-4o').
  * @param temperature Sampling temperature (default: 0.1).
- * @param maxTokens  Maximum tokens in the response (default: 4096).
- * @returns          Full assembled response (content + tool_calls).
+ * @param maxTokens   Maximum tokens in the response (default: 4096).
+ * @param signal      Optional AbortSignal to cancel the in-flight request.
+ * @returns           Full assembled response (content + tool_calls).
  */
 export async function streamChatCompletion(
   messages: Message[],
@@ -343,6 +344,7 @@ export async function streamChatCompletion(
   model: string = 'gpt-4o',
   temperature: number = 0.1,
   maxTokens: number = 4096,
+  signal?: AbortSignal,
 ): Promise<ChatCompletionResponse> {
   const copilotToken = await getCopilotToken();
 
@@ -355,6 +357,11 @@ export async function streamChatCompletion(
     max_tokens: maxTokens,
     temperature,
   });
+
+  // Honor a pre-aborted signal immediately
+  if (signal?.aborted) {
+    return Promise.resolve({ content: '', tool_calls: [] });
+  }
 
   return new Promise((resolve, reject) => {
     const parsed = new URL(COPILOT_CHAT_URL);
@@ -455,12 +462,38 @@ export async function streamChatCompletion(
         resolve({ content: fullContent, tool_calls: toolCalls });
       });
 
-      res.on('error', reject);
+      res.on('error', (err) => {
+        if (signal?.aborted) {
+          // Resolve with what we have so far instead of rejecting
+          resolve({ content: fullContent, tool_calls: [] });
+        } else {
+          reject(err);
+        }
+      });
     });
 
-    req.on('error', reject);
+    req.on('error', (err) => {
+      // Treat connection resets from an abort as a clean resolution
+      if (signal?.aborted) {
+        resolve({ content: '', tool_calls: [] });
+      } else {
+        reject(err);
+      }
+    });
     req.write(requestBody);
     req.end();
+
+    // Wire up the abort signal: destroy the underlying socket so the response
+    // handler resolves immediately with whatever was accumulated so far.
+    if (signal) {
+      signal.addEventListener(
+        'abort',
+        () => {
+          req.destroy();
+        },
+        { once: true }
+      );
+    }
   });
 }
 
