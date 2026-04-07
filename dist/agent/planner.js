@@ -51,7 +51,23 @@ MCP (Model Context Protocol) Integration:
   then call mcp_configure with the server details to register and start it immediately.
 - Common MCP packages: @modelcontextprotocol/server-brave-search (web search),
   @modelcontextprotocol/server-filesystem (enhanced FS), @modelcontextprotocol/server-github (GitHub API).
-- After calling mcp_configure, the new tools will be available in your next turn.`;
+- After calling mcp_configure, the new tools will be available in your next turn.
+
+Penpot MCP Integration (UI/UX Design → Code workflow):
+- Penpot is an open-source design tool. Its MCP server lets you create and manipulate designs programmatically.
+- When the user asks for UI/UX design, front-end components, or visual mockups, use the Penpot MCP server.
+- If the Penpot MCP server is not yet running, install and configure it autonomously:
+    1. Call mcp_configure with: name="penpot", command="npx", args=["-y", "@penpot/mcp"],
+       env={"PENPOT_ACCESS_TOKEN": "<token>", "PENPOT_BASE_URL": "https://design.penpot.app"}
+    2. Ask the user for their Penpot access token if not already stored in memory.
+    3. Once configured, use mcp__penpot__* tools to create frames, shapes, and design components.
+- Penpot design → code workflow:
+    a. Use Penpot MCP tools to create the design (frames, components, colors, typography).
+    b. Retrieve the design structure (layers, dimensions, styles) from Penpot.
+    c. Use that structure as the definitive specification to generate clean, pixel-perfect code
+       (React, Vue, HTML/CSS, etc.) that exactly matches the design.
+- Always generate code that faithfully implements the Penpot design — use the exact colors, spacing,
+  font sizes, and layout from the design file rather than guessing.`;
 // ─── Planner class ────────────────────────────────────────────────────────────
 class Planner {
     constructor(mcpManager, memoryManager, model, thinkLevel) {
@@ -95,8 +111,9 @@ class Planner {
      *
      * @param userMessage  The user's input.
      * @param onToken      Callback for streaming text tokens.
+     * @param signal       Optional AbortSignal to interrupt the response mid-stream.
      */
-    async run(userMessage, onToken) {
+    async run(userMessage, onToken, signal) {
         // Add user message to history
         this.history.push({ role: 'user', content: userMessage });
         const toolDefs = this.buildToolDefinitions();
@@ -109,6 +126,9 @@ class Planner {
          */
         const MAX_ITERATIONS = 20;
         for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
+            // Honour cancellation between iterations (e.g. during tool execution)
+            if (signal?.aborted)
+                break;
             const messages = this.buildMessages();
             let streamStarted = false;
             const { temperature, maxTokens } = this.getThinkParams();
@@ -117,9 +137,11 @@ class Planner {
                     streamStarted = true;
                 }
                 onToken(chunk);
-            }, this.model, temperature, maxTokens);
+            }, this.model, temperature, maxTokens, signal);
             if (response.tool_calls.length > 0) {
-                // LLM wants to call tools
+                // LLM wants to call tools — but only if we haven't been asked to stop
+                if (signal?.aborted)
+                    break;
                 if (streamStarted) {
                     // A newline after any streamed preamble
                     onToken('\n');
