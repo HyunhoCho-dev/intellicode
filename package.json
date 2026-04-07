@@ -1,0 +1,35 @@
+{
+  "name": "intellicode",
+  "version": "0.1.0",
+  "description": "AI coding agent powered by GitHub Copilot — works in PowerShell",
+  "main": "dist/index.js",
+  "bin": {
+    "intellicode": "dist/index.js"
+  },
+  "scripts": {
+    "prepare": "npm run build",
+    "build": "tsc --project tsconfig.json",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "keywords": [
+    "ai",
+    "copilot",
+    "cli",
+    "agent",
+    "powershell"
+  ],
+  "author": "HyunhoCho-dev",
+  "license": "MIT",
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
