@@ -80,6 +80,15 @@ if (-not $npmPath) {
 $npmVersion = & npm --version 2>&1
 Write-Success "npm v$npmVersion detected"
 
+# ─── Uninstall any previous version (clears npm's git-dep cache) ─────────────
+
+$existingCmd = Get-Command $Cmd -ErrorAction SilentlyContinue
+if ($existingCmd) {
+    Write-Step "Removing previous installation..."
+    & npm uninstall -g intellicode 2>&1 | Out-Null
+    Write-Success "Previous version removed"
+}
+
 # ─── Install ──────────────────────────────────────────────────────────────────
 
 Write-Step "Installing intellicode..."
@@ -165,6 +174,19 @@ if (-not $intellicodePath) {
 }
 
 Write-Success "intellicode installed at $($intellicodePath.Source)"
+
+# Confirm intellicode --version actually works (catches MODULE_NOT_FOUND at this point)
+$versionOutput = & intellicode --version 2>&1
+if ($LASTEXITCODE -ne 0) {
+    Write-Fail "intellicode --version failed: $versionOutput"
+    Write-Host ""
+    Write-Host "  The command was installed but cannot run. Try:" -ForegroundColor Yellow
+    Write-Host "    npm uninstall -g intellicode" -ForegroundColor Cyan
+    Write-Host "    npm install -g github:$Repo" -ForegroundColor Cyan
+    Read-Host "  Press Enter to close"
+    return
+}
+Write-Success "intellicode --version: $versionOutput"
 
 # ─── Done ─────────────────────────────────────────────────────────────────────
 
