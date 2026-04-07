@@ -10,11 +10,22 @@
  *   6. Stream tokens to stdout as they arrive.
  */
 import { McpManager } from '../mcp/manager';
+export type ThinkLevel = 'low' | 'medium' | 'high';
 export declare class Planner {
     private history;
     private tools;
     private mcpManager;
-    constructor(mcpManager: McpManager);
+    private model;
+    private thinkLevel;
+    constructor(mcpManager: McpManager, model?: string, thinkLevel?: ThinkLevel);
+    /** Set the model to use for completions. */
+    setModel(model: string): void;
+    /** Get the current model. */
+    getModel(): string;
+    /** Set the thinking intensity level. */
+    setThinkLevel(level: ThinkLevel): void;
+    /** Get the current thinking level. */
+    getThinkLevel(): ThinkLevel;
     /** Clear conversation history. */
     resetHistory(): void;
     /** Return current conversation history length. */
@@ -26,9 +37,13 @@ export declare class Planner {
      * @param onToken      Callback for streaming text tokens.
      */
     run(userMessage: string, onToken: (token: string) => void): Promise<void>;
+    /** Map think level to LLM sampling parameters. */
+    private getThinkParams;
+    /** Return a human-readable description of the current think level settings. */
+    getThinkLevelDescription(): string;
     /** Assemble the full message array including the system prompt. */
     private buildMessages;
-    /** Build tool definitions from built-in tools + MCP tools. */
+    /** Build tool definitions from built-in tools + MCP tools + mcp_configure. */
     private buildToolDefinitions;
     /**
      * Execute a single tool call and return its result as a string.

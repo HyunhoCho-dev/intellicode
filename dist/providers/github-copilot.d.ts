@@ -60,13 +60,23 @@ export declare function logout(): void;
  * @param messages   Conversation history.
  * @param tools      Optional tool definitions (OpenAI function-calling format).
  * @param onChunk    Called with each text chunk as it arrives.
+ * @param model      Model ID to use (default: 'gpt-4o').
+ * @param temperature Sampling temperature (default: 0.1).
+ * @param maxTokens  Maximum tokens in the response (default: 4096).
  * @returns          Full assembled response (content + tool_calls).
  */
-export declare function streamChatCompletion(messages: Message[], tools: ToolDefinition[], onChunk: (chunk: string) => void): Promise<ChatCompletionResponse>;
+export declare function streamChatCompletion(messages: Message[], tools: ToolDefinition[], onChunk: (chunk: string) => void, model?: string, temperature?: number, maxTokens?: number): Promise<ChatCompletionResponse>;
 /** Fetch available Copilot models (for diagnostics / future use). */
 export declare function listModels(): Promise<string[]>;
 /** Return the path to the config file (used for diagnostic output). */
 export declare function getConfigPath(): string;
+/** Persist the user's preferred model and think level. */
+export declare function saveModelSettings(model: string, thinkLevel: string): void;
+/** Load the user's preferred model and think level. */
+export declare function loadModelSettings(): {
+    model: string;
+    thinkLevel: string;
+};
 /** Return whether there is a cached (possibly expired) Copilot token. */
 export declare function authStatus(): {
     loggedIn: boolean;

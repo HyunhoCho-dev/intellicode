@@ -47,6 +47,8 @@ exports.logout = logout;
 exports.streamChatCompletion = streamChatCompletion;
 exports.listModels = listModels;
 exports.getConfigPath = getConfigPath;
+exports.saveModelSettings = saveModelSettings;
+exports.loadModelSettings = loadModelSettings;
 exports.authStatus = authStatus;
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
@@ -220,18 +222,21 @@ function generateMachineId() {
  * @param messages   Conversation history.
  * @param tools      Optional tool definitions (OpenAI function-calling format).
  * @param onChunk    Called with each text chunk as it arrives.
+ * @param model      Model ID to use (default: 'gpt-4o').
+ * @param temperature Sampling temperature (default: 0.1).
+ * @param maxTokens  Maximum tokens in the response (default: 4096).
  * @returns          Full assembled response (content + tool_calls).
  */
-async function streamChatCompletion(messages, tools, onChunk) {
+async function streamChatCompletion(messages, tools, onChunk, model = 'gpt-4o', temperature = 0.1, maxTokens = 4096) {
     const copilotToken = await getCopilotToken();
     const requestBody = JSON.stringify({
-        model: 'gpt-4o',
+        model,
         messages,
         tools: tools.length > 0 ? tools : undefined,
         tool_choice: tools.length > 0 ? 'auto' : undefined,
         stream: true,
-        max_tokens: 4096,
-        temperature: 0.1,
+        max_tokens: maxTokens,
+        temperature,
     });
     return new Promise((resolve, reject) => {
         const parsed = new URL(COPILOT_CHAT_URL);
@@ -352,6 +357,21 @@ async function listModels() {
 /** Return the path to the config file (used for diagnostic output). */
 function getConfigPath() {
     return CONFIG_FILE;
+}
+/** Persist the user's preferred model and think level. */
+function saveModelSettings(model, thinkLevel) {
+    const config = loadConfig();
+    config.selected_model = model;
+    config.think_level = thinkLevel;
+    saveConfig(config);
+}
+/** Load the user's preferred model and think level. */
+function loadModelSettings() {
+    const config = loadConfig();
+    return {
+        model: config.selected_model ?? 'gpt-4o',
+        thinkLevel: config.think_level ?? 'medium',
+    };
 }
 /** Return whether there is a cached (possibly expired) Copilot token. */
 function authStatus() {

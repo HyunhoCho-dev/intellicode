@@ -20,7 +20,15 @@ export declare class McpManager {
     private servers;
     /** Load and start all configured MCP servers. */
     load(): Promise<void>;
+    /**
+     * Install (persist config) and start a new MCP server at runtime.
+     * Called by the agent via the `mcp_configure` tool.
+     */
+    installAndStartServer(config: McpServerConfig): Promise<void>;
+    /** Return all persisted server configurations. */
+    getConfigs(): McpServerConfig[];
     private readConfigs;
+    private saveConfigs;
     /** Return all tool definitions from all running MCP servers. */
     getToolDefinitions(): ToolDefinition[];
     /**
