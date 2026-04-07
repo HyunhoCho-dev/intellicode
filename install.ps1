@@ -137,15 +137,16 @@ Write-Host "  (Running: npm install -g . from local clone)" -ForegroundColor Dar
 Write-Host ""
 
 $installFailed = $false
+$locationChanged = $false
 try {
     Push-Location $tempDir
+    $locationChanged = $true
     $npmOutput = & npm install -g . 2>&1
     $npmOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     if ($LASTEXITCODE -ne 0) {
         $installFailed = $true
     }
 } catch {
-    Pop-Location
     Write-Host ""
     Write-Fail "Installation failed: $_"
     Write-Host ""
@@ -154,7 +155,7 @@ try {
     Read-Host "  Press Enter to close"
     return
 } finally {
-    if ((Get-Location).Path -eq $tempDir) { Pop-Location }
+    if ($locationChanged) { Pop-Location }
 }
 
 # Clean up temporary clone regardless of install outcome
