@@ -324,11 +324,33 @@ class Planner {
                 if (!serverCommand || typeof serverCommand !== 'string' || !serverCommand.trim()) {
                     return 'Error: mcp_configure requires a non-empty "command" field.';
                 }
+                const configuredEnv = args['env'] ?? {};
+                // ── Penpot-specific pre-flight setup ──────────────────────────────
+                if (serverName.trim().toLowerCase() === 'penpot') {
+                    // 1. Ensure pnpm is installed (Penpot MCP requires it internally)
+                    const pnpmCheck = await (0, shell_1.executeCommand)('pnpm --version');
+                    if (pnpmCheck.exitCode !== 0) {
+                        onToken('\x1b[96m⚙  pnpm not found — installing globally via npm…\x1b[0m\n');
+                        const installResult = await (0, shell_1.executeCommand)('npm install -g pnpm');
+                        if (installResult.exitCode !== 0) {
+                            return (`Failed to install pnpm (required for Penpot MCP):\n` +
+                                (installResult.stderr || installResult.stdout));
+                        }
+                    }
+                    // 2. Inject PENPOT_ACCESS_TOKEN from memory if not already supplied
+                    if (!configuredEnv['PENPOT_ACCESS_TOKEN']) {
+                        const storedToken = this.memoryManager.get('penpot_access_token');
+                        if (storedToken) {
+                            configuredEnv['PENPOT_ACCESS_TOKEN'] = storedToken;
+                        }
+                    }
+                }
+                // ─────────────────────────────────────────────────────────────────
                 const serverConfig = {
                     name: serverName.trim(),
                     command: serverCommand.trim(),
                     args: args['args'] ?? [],
-                    env: args['env'] ?? {},
+                    env: configuredEnv,
                 };
                 await this.mcpManager.installAndStartServer(serverConfig);
                 return `MCP server "${serverConfig.name}" configured and started. Its tools are now available.`;

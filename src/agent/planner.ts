@@ -17,7 +17,7 @@ import {
   ToolCall,
 } from '../providers/github-copilot';
 import { fsTools, FsTool } from '../tools/fs';
-import { shellTools, ShellTool } from '../tools/shell';
+import { shellTools, ShellTool, executeCommand } from '../tools/shell';
 import { McpManager } from '../mcp/manager';
 import { MemoryManager } from '../memory/manager';
 
@@ -401,11 +401,39 @@ export class Planner {
         if (!serverCommand || typeof serverCommand !== 'string' || !serverCommand.trim()) {
           return 'Error: mcp_configure requires a non-empty "command" field.';
         }
+
+        const configuredEnv = (args['env'] as Record<string, string> | undefined) ?? {};
+
+        // ── Penpot-specific pre-flight setup ──────────────────────────────
+        if (serverName.trim().toLowerCase() === 'penpot') {
+          // 1. Ensure pnpm is installed (Penpot MCP requires it internally)
+          const pnpmCheck = await executeCommand('pnpm --version');
+          if (pnpmCheck.exitCode !== 0) {
+            onToken('\x1b[96m⚙  pnpm not found — installing globally via npm…\x1b[0m\n');
+            const installResult = await executeCommand('npm install -g pnpm');
+            if (installResult.exitCode !== 0) {
+              return (
+                `Failed to install pnpm (required for Penpot MCP):\n` +
+                (installResult.stderr || installResult.stdout)
+              );
+            }
+          }
+
+          // 2. Inject PENPOT_ACCESS_TOKEN from memory if not already supplied
+          if (!configuredEnv['PENPOT_ACCESS_TOKEN']) {
+            const storedToken = this.memoryManager.get('penpot_access_token');
+            if (storedToken) {
+              configuredEnv['PENPOT_ACCESS_TOKEN'] = storedToken;
+            }
+          }
+        }
+        // ─────────────────────────────────────────────────────────────────
+
         const serverConfig = {
           name: serverName.trim(),
           command: serverCommand.trim(),
           args: (args['args'] as string[] | undefined) ?? [],
-          env: (args['env'] as Record<string, string> | undefined) ?? {},
+          env: configuredEnv,
         };
         await this.mcpManager.installAndStartServer(serverConfig);
         return `MCP server "${serverConfig.name}" configured and started. Its tools are now available.`;
