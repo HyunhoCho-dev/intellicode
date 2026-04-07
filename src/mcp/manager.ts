@@ -216,6 +216,41 @@ export class McpManager {
     }
   }
 
+  /**
+   * Install (persist config) and start a new MCP server at runtime.
+   * Called by the agent via the `mcp_configure` tool.
+   */
+  async installAndStartServer(config: McpServerConfig): Promise<void> {
+    // Persist to config file (add if not already there)
+    const configs = this.readConfigs();
+    const existing = configs.findIndex((c) => c.name === config.name);
+    if (existing >= 0) {
+      configs[existing] = config; // update existing entry
+    } else {
+      configs.push(config);
+    }
+    this.saveConfigs(configs);
+
+    // Remove a previously-running server with the same name (re-register case)
+    const runningIdx = this.servers.findIndex(
+      (s) => s.serverName === config.name
+    );
+    if (runningIdx >= 0) {
+      this.servers[runningIdx].shutdown();
+      this.servers.splice(runningIdx, 1);
+    }
+
+    // Start the server
+    const server = new McpServerInstance(config);
+    await server.initialize();
+    this.servers.push(server);
+  }
+
+  /** Return all persisted server configurations. */
+  getConfigs(): McpServerConfig[] {
+    return this.readConfigs();
+  }
+
   private readConfigs(): McpServerConfig[] {
     try {
       if (fs.existsSync(MCP_CONFIG_FILE)) {
@@ -228,6 +263,18 @@ export class McpManager {
       // ignore
     }
     return [];
+  }
+
+  private saveConfigs(configs: McpServerConfig[]): void {
+    const dir = path.dirname(MCP_CONFIG_FILE);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    fs.writeFileSync(
+      MCP_CONFIG_FILE,
+      JSON.stringify({ servers: configs }, null, 2),
+      { mode: 0o600 }
+    );
   }
 
   /** Return all tool definitions from all running MCP servers. */
