@@ -583,7 +583,8 @@ MCP server and autonomously create UI/UX designs, then generate code from them.
                 });
             };
             const askToken = () => {
-                const hint = token ? ` [${token.slice(0, 6)}…]` : '';
+                // Don't reveal any characters of a stored token — just indicate one exists
+                const hint = token ? ' [token already set — press Enter to keep]' : '';
                 rl.question(`\x1b[90mPenpot access token${hint}:\x1b[0m `, (ans) => {
                     const trimmed = ans.trim();
                     if (trimmed)

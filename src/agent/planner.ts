@@ -162,7 +162,7 @@ export class Planner {
      */
     const MAX_ITERATIONS = 20;
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration++) {
-      // Honour cancellation between iterations (e.g. during tool execution)
+      // Honor cancellation between iterations (e.g. during tool execution)
       if (signal?.aborted) break;
 
       const messages = this.buildMessages();

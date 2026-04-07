@@ -358,7 +358,7 @@ export async function streamChatCompletion(
     temperature,
   });
 
-  // Honour a pre-aborted signal immediately
+  // Honor a pre-aborted signal immediately
   if (signal?.aborted) {
     return Promise.resolve({ content: '', tool_calls: [] });
   }

@@ -239,7 +239,7 @@ async function streamChatCompletion(messages, tools, onChunk, model = 'gpt-4o', 
         max_tokens: maxTokens,
         temperature,
     });
-    // Honour a pre-aborted signal immediately
+    // Honor a pre-aborted signal immediately
     if (signal?.aborted) {
         return Promise.resolve({ content: '', tool_calls: [] });
     }
