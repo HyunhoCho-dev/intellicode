@@ -6,6 +6,14 @@
  * and exposes their tools to the agent.
  */
 import { ToolDefinition } from '../providers/github-copilot';
+/**
+ * On Windows, Node/npm CLI executables are installed as `.cmd` batch files
+ * (e.g. `npx.cmd`, `pnpm.cmd`).  Node's `child_process.spawn` does NOT
+ * search for `.cmd` files unless `shell: true` is used, which causes the
+ * dreaded `spawn npx ENOENT` error.  This helper appends the `.cmd` suffix on
+ * Windows for common Node-ecosystem binaries so they can be spawned directly.
+ */
+export declare function resolveCommand(command: string): string;
 export interface McpServerConfig {
     /** Human-readable name for the server. */
     name: string;

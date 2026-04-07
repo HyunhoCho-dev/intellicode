@@ -41,10 +41,28 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.McpManager = void 0;
+exports.resolveCommand = resolveCommand;
 const child_process = __importStar(require("child_process"));
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+// ─── Platform helpers ─────────────────────────────────────────────────────────
+/**
+ * On Windows, Node/npm CLI executables are installed as `.cmd` batch files
+ * (e.g. `npx.cmd`, `pnpm.cmd`).  Node's `child_process.spawn` does NOT
+ * search for `.cmd` files unless `shell: true` is used, which causes the
+ * dreaded `spawn npx ENOENT` error.  This helper appends the `.cmd` suffix on
+ * Windows for common Node-ecosystem binaries so they can be spawned directly.
+ */
+function resolveCommand(command) {
+    if (os.platform() === 'win32') {
+        const nodeClis = ['npx', 'npm', 'pnpm', 'yarn', 'node', 'tsc', 'ts-node'];
+        if (nodeClis.includes(command.toLowerCase())) {
+            return command + '.cmd';
+        }
+    }
+    return command;
+}
 // ─── Live server instance ──────────────────────────────────────────────────────
 class McpServerInstance {
     constructor(config) {
@@ -53,7 +71,7 @@ class McpServerInstance {
         this.idCounter = 1;
         this.tools = [];
         this.serverName = config.name;
-        this.proc = child_process.spawn(config.command, config.args ?? [], {
+        this.proc = child_process.spawn(resolveCommand(config.command), config.args ?? [], {
             env: { ...process.env, ...(config.env ?? {}) },
             stdio: ['pipe', 'pipe', 'pipe'],
         });

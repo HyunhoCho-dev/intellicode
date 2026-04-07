@@ -598,6 +598,19 @@ MCP server and autonomously create UI/UX designs, then generate code from them.
         memoryManager.set('penpot_access_token', token);
         memoryManager.set('penpot_base_url', baseUrl);
         console.log('\x1b[90mStarting Penpot MCP server…\x1b[0m');
+        // ── Prerequisite: ensure pnpm is installed ────────────────────────────
+        const { executeCommand: execCmd } = await Promise.resolve().then(() => __importStar(require('./tools/shell')));
+        const pnpmCheck = await execCmd(`${(0, manager_1.resolveCommand)('pnpm')} --version`, undefined, 5000);
+        if (pnpmCheck.exitCode !== 0) {
+            console.log('\x1b[90mpnpm not found — installing automatically…\x1b[0m');
+            const pnpmInstall = await execCmd(`${(0, manager_1.resolveCommand)('npm')} install -g pnpm`, undefined, 60000);
+            if (pnpmInstall.exitCode === 0) {
+                console.log('\x1b[32m✓ pnpm installed\x1b[0m');
+            }
+            else {
+                console.log('\x1b[33m⚠  Could not install pnpm automatically — falling back to npx\x1b[0m');
+            }
+        }
         try {
             await mcpManager.installAndStartServer({
                 name: PENPOT_SERVER_NAME,
