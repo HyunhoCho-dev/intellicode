@@ -485,17 +485,28 @@ async function handleUpdateCommand(): Promise<void> {
     return;
   }
 
-  console.log('\x1b[90m→ Pulling latest changes from repository…\x1b[0m');
-  const pullResult = await executeCommand('git pull', repoDir, 60_000);
-  if (pullResult.exitCode !== 0) {
-    console.log('\x1b[31m✗ git pull failed\x1b[0m');
-    if (pullResult.stderr) console.log(`  stderr: ${pullResult.stderr}`);
-    if (pullResult.stdout) console.log(`  stdout: ${pullResult.stdout}`);
+  console.log('\x1b[90m→ Fetching latest changes from remote…\x1b[0m');
+  const fetchResult = await executeCommand('git fetch --all', repoDir, 60_000);
+  if (fetchResult.exitCode !== 0) {
+    console.log('\x1b[31m✗ git fetch failed\x1b[0m');
+    if (fetchResult.stderr) console.log(`  stderr: ${fetchResult.stderr}`);
+    if (fetchResult.stdout) console.log(`  stdout: ${fetchResult.stdout}`);
     console.log();
     return;
   }
-  const pullOutput = pullResult.stdout.trim() || 'Already up to date.';
-  console.log(`\x1b[32m✓ ${pullOutput}\x1b[0m`);
+  console.log('\x1b[32m✓ Fetched latest remote changes\x1b[0m');
+
+  console.log('\x1b[90m→ Syncing with origin/main (local build files will be overwritten)…\x1b[0m');
+  const resetResult = await executeCommand('git reset --hard origin/main', repoDir, 30_000);
+  if (resetResult.exitCode !== 0) {
+    console.log('\x1b[31m✗ git reset failed\x1b[0m');
+    if (resetResult.stderr) console.log(`  stderr: ${resetResult.stderr}`);
+    if (resetResult.stdout) console.log(`  stdout: ${resetResult.stdout}`);
+    console.log();
+    return;
+  }
+  const resetOutput = resetResult.stdout.trim() || 'HEAD is now up to date.';
+  console.log(`\x1b[32m✓ ${resetOutput}\x1b[0m`);
 
   console.log('\x1b[90m→ Installing dependencies…\x1b[0m');
   const installResult = await executeCommand('npm install', repoDir, 120_000);
