@@ -7,8 +7,13 @@
 #   1. Checks for Node.js (>= 18) and npm
 #   2. Installs intellicode globally via npm from the GitHub repository
 #   3. Verifies the installation
+#
+# NOTE: All exit paths use 'return' (not 'exit') so this script is safe to run
+# via iex without closing the calling PowerShell session.
 
-$ErrorActionPreference = "Stop"
+function Install-Intellicode {
+[CmdletBinding()]
+param()
 
 $Repo  = "HyunhoCho-dev/intellicode"
 $Pkg   = "github:$Repo"
@@ -51,7 +56,8 @@ if (-not $nodePath) {
     Write-Host "  Please install Node.js 18 or later from:" -ForegroundColor Yellow
     Write-Host "  https://nodejs.org/" -ForegroundColor Yellow
     Write-Host ""
-    exit 1
+    Read-Host "  Press Enter to close"
+    return
 }
 
 $nodeVersion = & node --version 2>&1
@@ -60,14 +66,16 @@ if ($nodeMajor -lt 18) {
     Write-Fail "Node.js $nodeVersion is too old. Version 18+ is required."
     Write-Host ""
     Write-Host "  Please upgrade Node.js from: https://nodejs.org/" -ForegroundColor Yellow
-    exit 1
+    Read-Host "  Press Enter to close"
+    return
 }
 Write-Success "Node.js $nodeVersion detected"
 
 $npmPath = Get-Command npm -ErrorAction SilentlyContinue
 if (-not $npmPath) {
     Write-Fail "npm is not found. Please reinstall Node.js."
-    exit 1
+    Read-Host "  Press Enter to close"
+    return
 }
 $npmVersion = & npm --version 2>&1
 Write-Success "npm v$npmVersion detected"
@@ -78,29 +86,46 @@ Write-Step "Installing intellicode..."
 Write-Host "  (Running: npm install -g $Pkg)" -ForegroundColor DarkGray
 Write-Host ""
 
-$npmOutput = @()
+$installFailed = $false
 try {
     $npmOutput = & npm install -g $Pkg 2>&1
     $npmOutput | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
     if ($LASTEXITCODE -ne 0) {
-        Write-Host ""
-        Write-Fail "npm exited with code $LASTEXITCODE"
-        Write-Host ""
-        Write-Host "  Full npm output above. Common fixes:" -ForegroundColor Yellow
-        Write-Host ""
-        Write-Host "  1. Run PowerShell as Administrator and try again." -ForegroundColor Yellow
-        Write-Host "  2. If you see EACCES/EPERM errors, fix npm permissions:" -ForegroundColor Yellow
-        Write-Host "       https://docs.npmjs.com/resolving-eacces-permissions-errors" -ForegroundColor Yellow
-        Write-Host "  3. If you see network errors, check your internet connection." -ForegroundColor Yellow
-        Write-Host ""
-        exit 1
+        $installFailed = $true
     }
 } catch {
     Write-Host ""
     Write-Fail "Installation failed: $_"
     Write-Host ""
     Write-Host "  If you see permission errors, try running as Administrator." -ForegroundColor Yellow
-    exit 1
+    Read-Host "  Press Enter to close"
+    return
+}
+
+if ($installFailed) {
+    Write-Host ""
+    Write-Fail "npm exited with code $LASTEXITCODE"
+    Write-Host ""
+    Write-Host "  Common fixes:" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  1. Run PowerShell as Administrator and try again." -ForegroundColor Yellow
+    Write-Host "  2. If you see EACCES/EPERM errors, fix npm permissions:" -ForegroundColor Yellow
+    Write-Host "       https://docs.npmjs.com/resolving-eacces-permissions-errors" -ForegroundColor Yellow
+    Write-Host "  3. If you see network errors, check your internet connection." -ForegroundColor Yellow
+    Write-Host ""
+    Read-Host "  Press Enter to close"
+    return
+}
+
+# ─── Refresh PATH so the new binary is visible in this session ────────────────
+
+# On Windows, npm places global bin scripts directly in the prefix directory.
+# 'npm config get prefix' works with all npm versions (unlike the deprecated 'npm bin -g').
+$npmGlobalBin = (& npm config get prefix 2>$null | Out-String).Trim()
+if ($npmGlobalBin -and (Test-Path $npmGlobalBin)) {
+    if (($env:PATH -split ';') -notcontains $npmGlobalBin) {
+        $env:PATH = "$npmGlobalBin;$env:PATH"
+    }
 }
 
 # ─── Verify ───────────────────────────────────────────────────────────────────
@@ -111,9 +136,13 @@ $intellicodePath = Get-Command $Cmd -ErrorAction SilentlyContinue
 if (-not $intellicodePath) {
     Write-Fail "intellicode command not found in PATH after installation."
     Write-Host ""
-    Write-Host "  Try running: npm bin -g" -ForegroundColor Yellow
-    Write-Host "  And add that directory to your PATH." -ForegroundColor Yellow
-    exit 1
+    Write-Host "  The package was installed but the command is not in your PATH." -ForegroundColor Yellow
+    Write-Host "  Run the following to find the npm global directory:" -ForegroundColor Yellow
+    Write-Host "    npm config get prefix" -ForegroundColor Cyan
+    Write-Host "  Then add that directory to your PATH environment variable," -ForegroundColor Yellow
+    Write-Host "  or open a new PowerShell window and try 'intellicode --help'." -ForegroundColor Yellow
+    Read-Host "  Press Enter to close"
+    return
 }
 
 Write-Success "intellicode installed at $($intellicodePath.Source)"
@@ -138,3 +167,7 @@ Write-Host '       intellicode "explain this project"' -ForegroundColor Cyan
 Write-Host ""
 Write-Host "  For help: intellicode --help" -ForegroundColor DarkGray
 Write-Host ""
+
+} # end function Install-Intellicode
+
+Install-Intellicode
