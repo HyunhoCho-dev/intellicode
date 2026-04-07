@@ -249,16 +249,18 @@ if (-not (Test-Path $BinDir)) {
 }
 
 # .cmd wrapper — used by cmd.exe and older PowerShell sessions
-$cmdWrapper = [System.IO.Path]::Combine($BinDir, "$Cmd.cmd")
+$cmdWrapper  = [System.IO.Path]::Combine($BinDir, "$Cmd.cmd")
+$cmdEntryPoint = [System.IO.Path]::Combine($InstallDir, "dist", "index.js")
 @"
 @echo off
-node "$InstallDir\dist\index.js" %*
+node "$cmdEntryPoint" %*
 "@ | Set-Content -Path $cmdWrapper -Encoding ASCII -Force
 
 # .ps1 wrapper — used by modern PowerShell sessions
-$ps1Wrapper = [System.IO.Path]::Combine($BinDir, "$Cmd.ps1")
+$ps1Wrapper  = [System.IO.Path]::Combine($BinDir, "$Cmd.ps1")
+$ps1EntryPoint = [System.IO.Path]::Combine($InstallDir, "dist", "index.js")
 @"
-& node "$InstallDir\dist\index.js" @args
+& node "$ps1EntryPoint" @args
 "@ | Set-Content -Path $ps1Wrapper -Encoding UTF8 -Force
 
 Write-Success "Wrapper scripts created"
