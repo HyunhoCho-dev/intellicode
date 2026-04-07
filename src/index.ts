@@ -31,6 +31,7 @@ import {
 } from './providers/github-copilot';
 import { Planner, ThinkLevel } from './agent/planner';
 import { McpManager } from './mcp/manager';
+import { MemoryManager } from './memory/manager';
 
 // ─── Package metadata ──────────────────────────────────────────────────────────
 
@@ -49,7 +50,7 @@ try {
 
 function printBanner(): void {
   console.log(`
-\x1b[36m  ___       _       _ _ _  _____          _      
+\x1b[96m  ___       _       _ _ _  _____          _      
  |_ _|_ __ | |_ ___| | (_)/ ____|___   __| | ___ 
   | || '_ \\| __/ _ \\ | | | |   / _ \\ / _\` |/ _ \\
   | || | | | ||  __/ | | | |__| (_) | (_| |  __/
@@ -62,7 +63,11 @@ function printBanner(): void {
 
 // ─── REPL ──────────────────────────────────────────────────────────────────────
 
-async function runRepl(planner: Planner, mcpManager: McpManager): Promise<void> {
+async function runRepl(
+  planner: Planner,
+  mcpManager: McpManager,
+  memoryManager: MemoryManager
+): Promise<void> {
   printBanner();
   console.log(
     '\x1b[90mType your request and press Enter. Type \x1b[0m/help\x1b[90m to see all commands.\x1b[0m\n'
@@ -71,7 +76,7 @@ async function runRepl(planner: Planner, mcpManager: McpManager): Promise<void> 
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,
-    prompt: '\x1b[32m➜ intellicode\x1b[0m  ',
+    prompt: '\x1b[96m➜ intellicode\x1b[0m  ',
     terminal: true,
   });
 
@@ -88,7 +93,7 @@ async function runRepl(planner: Planner, mcpManager: McpManager): Promise<void> 
     // ── Built-in REPL commands ──────────────────────────────────────────────
 
     if (input === '/exit' || input === '/quit') {
-      console.log('\nGoodbye!\n');
+      console.log('\n\x1b[96mGoodbye!\x1b[0m\n');
       rl.close();
       process.exit(0);
     }
@@ -115,7 +120,7 @@ async function runRepl(planner: Planner, mcpManager: McpManager): Promise<void> 
     }
 
     if (input === '/status') {
-      printStatus(planner, mcpManager);
+      printStatus(planner, mcpManager, memoryManager);
       rl.prompt();
       return;
     }
@@ -132,6 +137,22 @@ async function runRepl(planner: Planner, mcpManager: McpManager): Promise<void> 
     // ── /think command ───────────────────────────────────────────────────────
     if (input.startsWith('/think')) {
       handleThinkCommand(input, planner);
+      rl.prompt();
+      return;
+    }
+
+    // ── /memory command ──────────────────────────────────────────────────────
+    if (input.startsWith('/memory')) {
+      handleMemoryCommand(input, memoryManager);
+      rl.prompt();
+      return;
+    }
+
+    // ── /update command ──────────────────────────────────────────────────────
+    if (input === '/update') {
+      rl.pause();
+      await handleUpdateCommand();
+      rl.resume();
       rl.prompt();
       return;
     }
@@ -164,45 +185,64 @@ async function runRepl(planner: Planner, mcpManager: McpManager): Promise<void> 
   });
 
   rl.on('close', () => {
-    console.log('\nGoodbye!\n');
+    console.log('\n\x1b[96mGoodbye!\x1b[0m\n');
     process.exit(0);
   });
 }
 
 function printReplHelp(): void {
   console.log(`
-\x1b[36mAvailable REPL commands:\x1b[0m
+\x1b[96mAvailable REPL commands:\x1b[0m
 
-  \x1b[33mConversation\x1b[0m
+  \x1b[96mConversation\x1b[0m
     /clear, /reset   Clear conversation context
     /history         Show number of messages in context
     /exit, /quit     Quit intellicode
 
-  \x1b[33mModel & Reasoning\x1b[0m
+  \x1b[96mModel & Reasoning\x1b[0m
     /models          List available models and select one interactively
-    /think [level]   Set reasoning intensity: low | medium | high
-                     (no argument shows current level)
+    /think [level]   Set reasoning intensity: off | on | low | medium | high
+                     • off      — disable deep reasoning (fast, concise)
+                     • on       — re-enable reasoning (restores to medium)
+                     • low      — light reasoning
+                     • medium   — balanced (default)
+                     • high     — deep, careful reasoning
+                     (no argument shows the current level)
 
-  \x1b[33mMCP Servers\x1b[0m
+  \x1b[96mMemory\x1b[0m
+    /memory list               List all stored memories
+    /memory set <key> <value>  Store a key-value memory
+    /memory delete <key>       Delete a memory by key
+    /memory clear              Clear all memories
+
+  \x1b[96mMCP Servers\x1b[0m
     /mcp list        List configured and running MCP servers
     /mcp install <pkg> [name]
                      Install an npm MCP package and register it
                      Example: /mcp install @modelcontextprotocol/server-brave-search brave-search
 
-  \x1b[33mInfo\x1b[0m
-    /status          Show current model, think level and MCP servers
+  \x1b[96mMaintenance\x1b[0m
+    /update          Pull latest changes, install deps, and rebuild
+
+  \x1b[96mInfo\x1b[0m
+    /status          Show current model, think level, memory count, and MCP servers
     /help            Show this help message
 `);
 }
 
 // ─── /status ──────────────────────────────────────────────────────────────────
 
-function printStatus(planner: Planner, mcpManager: McpManager): void {
+function printStatus(
+  planner: Planner,
+  mcpManager: McpManager,
+  memoryManager: MemoryManager
+): void {
   const configs = mcpManager.getConfigs();
   console.log(`
-\x1b[36mIntelliCode status:\x1b[0m
-  Model       : \x1b[33m${planner.getModel()}\x1b[0m
-  Think level : \x1b[33m${planner.getThinkLevelDescription()}\x1b[0m
+\x1b[96mIntelliCode status:\x1b[0m
+  Model       : \x1b[96m${planner.getModel()}\x1b[0m
+  Think level : \x1b[96m${planner.getThinkLevelDescription()}\x1b[0m
+  Memories    : ${memoryManager.size} stored
   History     : ${planner.historyLength} messages
   MCP servers : ${configs.length > 0 ? configs.map((c) => c.name).join(', ') : '(none)'}
 `);
@@ -224,10 +264,10 @@ async function handleModelsCommand(
   }
 
   const current = planner.getModel();
-  console.log('\n\x1b[36mAvailable models:\x1b[0m\n');
+  console.log('\n\x1b[96mAvailable models:\x1b[0m\n');
   models.forEach((m, i) => {
     const marker = m === current ? '\x1b[32m✓\x1b[0m' : ' ';
-    console.log(`  ${marker} \x1b[33m${i + 1}\x1b[0m. ${m}`);
+    console.log(`  ${marker} \x1b[96m${i + 1}\x1b[0m. ${m}`);
   });
   console.log();
 
@@ -240,7 +280,7 @@ async function handleModelsCommand(
           const chosen = models[n - 1];
           planner.setModel(chosen);
           saveModelSettings(chosen, planner.getThinkLevel());
-          console.log(`\x1b[32m✓ Model set to \x1b[33m${chosen}\x1b[32m\x1b[0m\n`);
+          console.log(`\x1b[32m✓ Model set to \x1b[96m${chosen}\x1b[0m\n`);
         } else if (answer.trim() !== '') {
           console.log('\x1b[90m(Invalid selection — model unchanged)\x1b[0m\n');
         } else {
@@ -260,23 +300,161 @@ function handleThinkCommand(input: string, planner: Planner): void {
 
   if (!level) {
     const cur = planner.getThinkLevel();
-    console.log(`\x1b[90mCurrent think level: \x1b[33m${cur}\x1b[0m\n`);
+    console.log(`\x1b[90mCurrent think level: \x1b[96m${cur}\x1b[0m\n`);
     return;
   }
 
-  if (level !== 'low' && level !== 'medium' && level !== 'high') {
+  // 'on' is an alias for re-enabling reasoning at the default medium level
+  if (level === 'on') {
+    planner.setThinkLevel('medium');
+    saveModelSettings(planner.getModel(), 'medium');
+    console.log('\x1b[32m✓ Thinking enabled\x1b[0m (level: \x1b[96mmedium\x1b[0m)\n');
+    return;
+  }
+
+  if (level !== 'off' && level !== 'low' && level !== 'medium' && level !== 'high') {
     console.log(
-      '\x1b[31mInvalid think level.\x1b[0m Use: \x1b[33mlow\x1b[0m | \x1b[33mmedium\x1b[0m | \x1b[33mhigh\x1b[0m\n'
+      '\x1b[31mInvalid think level.\x1b[0m Use: ' +
+        '\x1b[96moff\x1b[0m | \x1b[96mon\x1b[0m | \x1b[96mlow\x1b[0m | \x1b[96mmedium\x1b[0m | \x1b[96mhigh\x1b[0m\n'
     );
     return;
   }
 
   planner.setThinkLevel(level as ThinkLevel);
   saveModelSettings(planner.getModel(), level);
-  console.log(`\x1b[32m✓ Think level set to \x1b[33m${level}\x1b[0m\n`);
+  if (level === 'off') {
+    console.log('\x1b[32m✓ Thinking disabled\x1b[0m (fast response mode)\n');
+  } else {
+    console.log(`\x1b[32m✓ Think level set to \x1b[96m${level}\x1b[0m\n`);
+  }
 }
 
-// ─── /mcp (REPL) ──────────────────────────────────────────────────────────────
+// ─── /memory ──────────────────────────────────────────────────────────────────
+
+function handleMemoryCommand(
+  input: string,
+  memoryManager: MemoryManager
+): void {
+  const parts = input.split(/\s+/);
+  const sub = parts[1]?.toLowerCase();
+
+  if (!sub || sub === 'list') {
+    const entries = memoryManager.getAll();
+    if (entries.length === 0) {
+      console.log('\x1b[90m(No memories stored)\x1b[0m\n');
+      return;
+    }
+    console.log('\n\x1b[96mStored memories:\x1b[0m\n');
+    for (const e of entries) {
+      console.log(`  \x1b[96m${e.key}\x1b[0m: ${e.value}`);
+    }
+    console.log();
+    return;
+  }
+
+  if (sub === 'set') {
+    const key = parts[2];
+    const value = parts.slice(3).join(' ');
+    if (!key || !value) {
+      console.log('\x1b[31mUsage:\x1b[0m /memory set <key> <value>\n');
+      return;
+    }
+    memoryManager.set(key, value);
+    console.log(`\x1b[32m✓ Memory saved:\x1b[0m \x1b[96m${key}\x1b[0m = ${value}\n`);
+    return;
+  }
+
+  if (sub === 'delete' || sub === 'del') {
+    const key = parts[2];
+    if (!key) {
+      console.log('\x1b[31mUsage:\x1b[0m /memory delete <key>\n');
+      return;
+    }
+    if (memoryManager.delete(key)) {
+      console.log(`\x1b[32m✓ Memory deleted:\x1b[0m \x1b[96m${key}\x1b[0m\n`);
+    } else {
+      console.log(`\x1b[90m(No memory found with key: ${key})\x1b[0m\n`);
+    }
+    return;
+  }
+
+  if (sub === 'clear') {
+    memoryManager.clear();
+    console.log('\x1b[32m✓ All memories cleared\x1b[0m\n');
+    return;
+  }
+
+  console.log(
+    '\x1b[31mUnknown /memory subcommand.\x1b[0m\n' +
+      'Usage:\n' +
+      '  /memory list\n' +
+      '  /memory set <key> <value>\n' +
+      '  /memory delete <key>\n' +
+      '  /memory clear\n'
+  );
+}
+
+// ─── /update ──────────────────────────────────────────────────────────────────
+
+async function handleUpdateCommand(): Promise<void> {
+  // The package root is one directory above dist/ (where __dirname points)
+  const repoDir = path.resolve(path.join(__dirname, '..'));
+  console.log('\n\x1b[96mUpdating IntelliCode…\x1b[0m\n');
+
+  const { executeCommand } = await import('./tools/shell');
+
+  // Verify that repoDir is actually a git repository before running commands
+  const gitCheck = await executeCommand('git rev-parse --is-inside-work-tree', repoDir, 5_000);
+  if (gitCheck.exitCode !== 0) {
+    console.log(
+      '\x1b[31m✗ Cannot update:\x1b[0m The install directory is not a git repository.\n' +
+        `  Directory: ${repoDir}\n` +
+        '  To update, re-run the installation script instead.\n'
+    );
+    return;
+  }
+
+  console.log('\x1b[90m→ Pulling latest changes from repository…\x1b[0m');
+  const pullResult = await executeCommand('git pull', repoDir, 60_000);
+  if (pullResult.exitCode !== 0) {
+    console.log('\x1b[31m✗ git pull failed\x1b[0m');
+    if (pullResult.stderr) console.log(`  stderr: ${pullResult.stderr}`);
+    if (pullResult.stdout) console.log(`  stdout: ${pullResult.stdout}`);
+    console.log();
+    return;
+  }
+  const pullOutput = pullResult.stdout.trim() || 'Already up to date.';
+  console.log(`\x1b[32m✓ ${pullOutput}\x1b[0m`);
+
+  console.log('\x1b[90m→ Installing dependencies…\x1b[0m');
+  const installResult = await executeCommand('npm install', repoDir, 120_000);
+  if (installResult.exitCode !== 0) {
+    console.log('\x1b[31m✗ npm install failed\x1b[0m');
+    if (installResult.stderr) console.log(`  stderr: ${installResult.stderr}`);
+    if (installResult.stdout) console.log(`  stdout: ${installResult.stdout}`);
+    console.log();
+    return;
+  }
+  console.log('\x1b[32m✓ Dependencies installed\x1b[0m');
+
+  console.log('\x1b[90m→ Rebuilding…\x1b[0m');
+  const buildResult = await executeCommand('npm run build', repoDir, 120_000);
+  if (buildResult.exitCode !== 0) {
+    console.log('\x1b[31m✗ Build failed\x1b[0m');
+    if (buildResult.stderr) console.log(`  stderr: ${buildResult.stderr}`);
+    if (buildResult.stdout) console.log(`  stdout: ${buildResult.stdout}`);
+    console.log();
+    return;
+  }
+  console.log('\x1b[32m✓ Build complete\x1b[0m');
+
+  console.log(
+    '\n\x1b[32m✓ IntelliCode updated successfully!\x1b[0m ' +
+      '\x1b[90mPlease restart intellicode to use the new version.\x1b[0m\n'
+  );
+}
+
+
 
 async function handleMcpReplCommand(
   input: string,
@@ -291,10 +469,10 @@ async function handleMcpReplCommand(
       console.log('\x1b[90m(No MCP servers configured)\x1b[0m\n');
       return;
     }
-    console.log('\n\x1b[36mConfigured MCP servers:\x1b[0m\n');
+    console.log('\n\x1b[96mConfigured MCP servers:\x1b[0m\n');
     for (const c of configs) {
       const cmd = [c.command, ...(c.args ?? [])].join(' ');
-      console.log(`  \x1b[33m${c.name}\x1b[0m  —  ${cmd}`);
+      console.log(`  \x1b[96m${c.name}\x1b[0m  —  ${cmd}`);
     }
     console.log();
     return;
@@ -330,7 +508,7 @@ async function handleMcpReplCommand(
         args: ['-y', pkg],
         env: {},
       });
-      console.log(`\x1b[32m✓ MCP server \x1b[33m${name}\x1b[32m started and registered\x1b[0m\n`);
+      console.log(`\x1b[32m✓ MCP server \x1b[96m${name}\x1b[32m started and registered\x1b[0m\n`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.log(
@@ -425,10 +603,10 @@ function mcpList(): void {
       console.log('\x1b[90m(No MCP servers configured)\x1b[0m\n');
       return;
     }
-    console.log(`\x1b[36mConfigured MCP servers (${configPath}):\x1b[0m\n`);
+    console.log(`\x1b[96mConfigured MCP servers (${configPath}):\x1b[0m\n`);
     for (const s of servers) {
       const cmd = [s.command, ...(s.args ?? [])].join(' ');
-      console.log(`  \x1b[33m${s.name}\x1b[0m  —  ${cmd}`);
+      console.log(`  \x1b[96m${s.name}\x1b[0m  —  ${cmd}`);
     }
     console.log();
   } catch (err) {
@@ -454,7 +632,7 @@ async function main(): Promise<void> {
       if (!isLoggedIn()) {
         console.log(
           '\x1b[33mYou are not logged in.\x1b[0m\n' +
-            'Run \x1b[36mintellicode auth login\x1b[0m first.\n'
+            'Run \x1b[96mintellicode auth login\x1b[0m first.\n'
         );
         process.exit(1);
       }
@@ -465,7 +643,16 @@ async function main(): Promise<void> {
 
       // Load persisted model & think level
       const { model, thinkLevel } = loadModelSettings();
-      const planner = new Planner(mcpManager, model, thinkLevel as ThinkLevel);
+
+      // Load long-term memory
+      const memoryManager = new MemoryManager();
+
+      const planner = new Planner(
+        mcpManager,
+        memoryManager,
+        model,
+        thinkLevel as ThinkLevel
+      );
 
       // Graceful shutdown
       process.on('SIGINT', () => {
@@ -480,7 +667,7 @@ async function main(): Promise<void> {
       if (prompt) {
         await runSinglePrompt(prompt, planner);
       } else {
-        await runRepl(planner, mcpManager);
+        await runRepl(planner, mcpManager, memoryManager);
       }
 
       mcpManager.shutdown();

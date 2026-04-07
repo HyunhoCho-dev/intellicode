@@ -16,10 +16,19 @@ const github_copilot_1 = require("../providers/github-copilot");
 const fs_1 = require("../tools/fs");
 const shell_1 = require("../tools/shell");
 // ─── System prompt ────────────────────────────────────────────────────────────
-const SYSTEM_PROMPT = `You are IntelliCode, an expert AI coding agent running in a terminal (PowerShell or bash).
-You help developers with any coding task: reading/writing files, running tests, debugging, refactoring, and more.
+const SYSTEM_PROMPT = `You are IntelliCode, an expert AI software engineer running in a terminal (PowerShell or bash).
+Your primary mission is to produce HIGH-QUALITY, production-ready code that meets professional engineering standards.
 
-Guidelines:
+Core principles for code generation:
+- Write clean, readable, well-structured code that follows language idioms and best practices.
+- Always include comprehensive error handling: validate inputs, handle edge cases, and provide informative error messages.
+- Add concise but meaningful documentation: JSDoc/docstrings for public functions, inline comments for non-obvious logic.
+- Think about architecture first — choose appropriate design patterns, separate concerns, and keep components cohesive and loosely coupled.
+- Write code that is testable by design: pure functions where possible, dependency injection, avoid global mutable state.
+- Prefer explicit over implicit, and clarity over cleverness.
+- When modifying existing code, preserve the existing code style and conventions.
+
+Task-solving approach:
 - Always reason step-by-step before taking actions. Briefly describe your plan.
 - Use the available tools to explore the file system, read source code, and execute commands.
 - When writing or modifying files, show a short summary of changes made.
@@ -28,6 +37,11 @@ Guidelines:
 - Never ask the user for permission to call a tool — just do it, then explain.
 - If a task requires multiple steps, complete all of them before reporting back.
 - Prefer targeted edits over rewriting entire files when fixing bugs.
+
+Memory:
+- You have access to a memory_store tool to remember important user preferences, project conventions, or facts for future sessions.
+- When a user mentions a preference, convention, or important context that should persist, store it immediately.
+- Do not store trivial or temporary information — only things that will genuinely improve future interactions.
 
 MCP (Model Context Protocol) Integration:
 - You have access to MCP tools that extend your capabilities (prefixed with mcp__).
@@ -40,12 +54,13 @@ MCP (Model Context Protocol) Integration:
 - After calling mcp_configure, the new tools will be available in your next turn.`;
 // ─── Planner class ────────────────────────────────────────────────────────────
 class Planner {
-    constructor(mcpManager, model, thinkLevel) {
+    constructor(mcpManager, memoryManager, model, thinkLevel) {
         this.history = [];
         this.tools = [...fs_1.fsTools, ...shell_1.shellTools];
         this.model = 'gpt-4o';
         this.thinkLevel = 'medium';
         this.mcpManager = mcpManager;
+        this.memoryManager = memoryManager;
         if (model)
             this.model = model;
         if (thinkLevel)
@@ -146,6 +161,8 @@ class Planner {
             // 'high' uses temperature=0 for deterministic, focused reasoning (more tokens to think deeper)
             case 'high': return { temperature: 0, maxTokens: 8192 };
             case 'low': return { temperature: 0.3, maxTokens: 2048 };
+            // 'off' skips deep reasoning — fast, conversational responses
+            case 'off': return { temperature: 0.7, maxTokens: 1024 };
             default: return { temperature: 0.1, maxTokens: 4096 };
         }
     }
@@ -154,17 +171,22 @@ class Planner {
         switch (this.thinkLevel) {
             case 'high': return 'high   (temperature=0.0, max_tokens=8192)';
             case 'low': return 'low    (temperature=0.3, max_tokens=2048)';
+            case 'off': return 'off    (disabled — fast responses, temperature=0.7, max_tokens=1024)';
             default: return 'medium (temperature=0.1, max_tokens=4096)';
         }
     }
     /** Assemble the full message array including the system prompt. */
     buildMessages() {
+        const memoryContext = this.memoryManager.toContextString();
+        const systemContent = memoryContext
+            ? `${SYSTEM_PROMPT}\n${memoryContext}`
+            : SYSTEM_PROMPT;
         return [
-            { role: 'system', content: SYSTEM_PROMPT },
+            { role: 'system', content: systemContent },
             ...this.history,
         ];
     }
-    /** Build tool definitions from built-in tools + MCP tools + mcp_configure. */
+    /** Build tool definitions from built-in tools + MCP tools + mcp_configure + memory_store. */
     buildToolDefinitions() {
         const builtIn = this.tools.map((t) => ({
             type: 'function',
@@ -207,8 +229,32 @@ class Planner {
                 },
             },
         };
+        // Special tool: let the agent persist information to long-term memory
+        const memoryStoreTool = {
+            type: 'function',
+            function: {
+                name: 'memory_store',
+                description: 'Store a key-value pair in long-term memory so it is recalled in future sessions. ' +
+                    'Use this to remember user preferences, project-specific conventions, important facts, ' +
+                    'or recurring context. Only store information worth retaining across sessions.',
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        key: {
+                            type: 'string',
+                            description: 'A short, descriptive label (e.g. "preferred_language", "project_style").',
+                        },
+                        value: {
+                            type: 'string',
+                            description: 'The information to remember.',
+                        },
+                    },
+                    required: ['key', 'value'],
+                },
+            },
+        };
         const mcpDefs = this.mcpManager.getToolDefinitions();
-        return [...builtIn, mcpConfigureTool, ...mcpDefs];
+        return [...builtIn, mcpConfigureTool, memoryStoreTool, ...mcpDefs];
     }
     /**
      * Execute a single tool call and return its result as a string.
@@ -244,6 +290,19 @@ class Planner {
                 };
                 await this.mcpManager.installAndStartServer(serverConfig);
                 return `MCP server "${serverConfig.name}" configured and started. Its tools are now available.`;
+            }
+            // Handle memory_store: persist a key-value pair for future sessions
+            if (name === 'memory_store') {
+                const memKey = args['key'];
+                const memValue = args['value'];
+                if (!memKey?.trim()) {
+                    return 'Error: memory_store requires a non-empty "key" field.';
+                }
+                if (!memValue || typeof memValue !== 'string') {
+                    return 'Error: memory_store requires a "value" field.';
+                }
+                this.memoryManager.set(memKey.trim(), memValue);
+                return `Memory stored: "${memKey.trim()}" = "${memValue}"`;
             }
             // Check MCP tools first
             if (name.startsWith('mcp__')) {

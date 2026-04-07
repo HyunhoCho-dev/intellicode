@@ -10,14 +10,16 @@
  *   6. Stream tokens to stdout as they arrive.
  */
 import { McpManager } from '../mcp/manager';
-export type ThinkLevel = 'low' | 'medium' | 'high';
+import { MemoryManager } from '../memory/manager';
+export type ThinkLevel = 'off' | 'low' | 'medium' | 'high';
 export declare class Planner {
     private history;
     private tools;
     private mcpManager;
+    private memoryManager;
     private model;
     private thinkLevel;
-    constructor(mcpManager: McpManager, model?: string, thinkLevel?: ThinkLevel);
+    constructor(mcpManager: McpManager, memoryManager: MemoryManager, model?: string, thinkLevel?: ThinkLevel);
     /** Set the model to use for completions. */
     setModel(model: string): void;
     /** Get the current model. */
@@ -43,7 +45,7 @@ export declare class Planner {
     getThinkLevelDescription(): string;
     /** Assemble the full message array including the system prompt. */
     private buildMessages;
-    /** Build tool definitions from built-in tools + MCP tools + mcp_configure. */
+    /** Build tool definitions from built-in tools + MCP tools + mcp_configure + memory_store. */
     private buildToolDefinitions;
     /**
      * Execute a single tool call and return its result as a string.
