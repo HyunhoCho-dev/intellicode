@@ -25,6 +25,27 @@ import { MemoryManager } from '../memory/manager';
 
 export type ThinkLevel = 'off' | 'low' | 'medium' | 'high';
 
+// ─── Execution spinner ────────────────────────────────────────────────────────
+
+const EXEC_SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/**
+ * Show a sky-blue animated spinner on stdout while a tool call is executing.
+ * Returns a `stop()` function that clears the spinner line when called.
+ */
+function startExecutingSpinner(): () => void {
+  let idx = 0;
+  process.stdout.write(`\x1b[96m${EXEC_SPINNER_FRAMES[0]} Executing…\x1b[0m`);
+  const interval = setInterval(() => {
+    idx = (idx + 1) % EXEC_SPINNER_FRAMES.length;
+    process.stdout.write(`\r\x1b[96m${EXEC_SPINNER_FRAMES[idx]} Executing…\x1b[0m`);
+  }, 100);
+  return () => {
+    clearInterval(interval);
+    process.stdout.write('\r\x1b[2K');
+  };
+}
+
 // ─── System prompt ────────────────────────────────────────────────────────────
 
 const SYSTEM_PROMPT = `You are IntelliCode, an expert AI software engineer running in a terminal (PowerShell or bash).
@@ -366,6 +387,9 @@ export class Planner {
       `\n\x1b[90m⚙  ${name}(${this.formatArgs(args)})\x1b[0m\n`
     );
 
+    // Start a sky-blue spinner while the tool is executing
+    const stopSpinner = startExecutingSpinner();
+
     try {
       // Handle mcp_configure: install + start a new MCP server at runtime
       if (name === 'mcp_configure') {
@@ -418,6 +442,8 @@ export class Planner {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return `Error executing "${name}": ${msg}`;
+    } finally {
+      stopSpinner();
     }
   }
 

@@ -30,7 +30,7 @@ import {
   loadModelSettings,
 } from './providers/github-copilot';
 import { Planner, ThinkLevel } from './agent/planner';
-import { McpManager } from './mcp/manager';
+import { McpManager, resolveCommand } from './mcp/manager';
 import { MemoryManager } from './memory/manager';
 
 // ─── Package metadata ──────────────────────────────────────────────────────────
@@ -707,6 +707,26 @@ MCP server and autonomously create UI/UX designs, then generate code from them.
     memoryManager.set('penpot_base_url', baseUrl);
 
     console.log('\x1b[90mStarting Penpot MCP server…\x1b[0m');
+
+    // ── Prerequisite: ensure pnpm is installed ────────────────────────────
+    const { executeCommand: execCmd } = await import('./tools/shell');
+    const pnpmCheck = await execCmd(`${resolveCommand('pnpm')} --version`, undefined, 5_000);
+    if (pnpmCheck.exitCode !== 0) {
+      console.log('\x1b[90mpnpm not found — installing automatically…\x1b[0m');
+      const pnpmInstall = await execCmd(
+        `${resolveCommand('npm')} install -g pnpm`,
+        undefined,
+        60_000
+      );
+      if (pnpmInstall.exitCode === 0) {
+        console.log('\x1b[32m✓ pnpm installed\x1b[0m');
+      } else {
+        console.log(
+          '\x1b[33m⚠  Could not install pnpm automatically — falling back to npx\x1b[0m'
+        );
+      }
+    }
+
     try {
       await mcpManager.installAndStartServer({
         name: PENPOT_SERVER_NAME,

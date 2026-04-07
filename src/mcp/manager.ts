@@ -12,6 +12,25 @@ import * as os from 'os';
 import * as path from 'path';
 import { ToolDefinition } from '../providers/github-copilot';
 
+// ─── Platform helpers ─────────────────────────────────────────────────────────
+
+/**
+ * On Windows, Node/npm CLI executables are installed as `.cmd` batch files
+ * (e.g. `npx.cmd`, `pnpm.cmd`).  Node's `child_process.spawn` does NOT
+ * search for `.cmd` files unless `shell: true` is used, which causes the
+ * dreaded `spawn npx ENOENT` error.  This helper appends the `.cmd` suffix on
+ * Windows for common Node-ecosystem binaries so they can be spawned directly.
+ */
+export function resolveCommand(command: string): string {
+  if (os.platform() === 'win32') {
+    const nodeClis = ['npx', 'npm', 'pnpm', 'yarn', 'node', 'tsc', 'ts-node'];
+    if (nodeClis.includes(command.toLowerCase())) {
+      return command + '.cmd';
+    }
+  }
+  return command;
+}
+
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 export interface McpServerConfig {
@@ -60,7 +79,7 @@ class McpServerInstance {
 
   constructor(config: McpServerConfig) {
     this.serverName = config.name;
-    this.proc = child_process.spawn(config.command, config.args ?? [], {
+    this.proc = child_process.spawn(resolveCommand(config.command), config.args ?? [], {
       env: { ...process.env, ...(config.env ?? {}) },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
