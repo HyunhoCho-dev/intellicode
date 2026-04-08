@@ -83,8 +83,8 @@ function boxMid(label) {
 function printBanner(version) {
     const logoText = `${exports.C.bold}${exports.C.cyan}I N T E L L I C O D E${exports.C.reset}`;
     const logoLine = `  ${exports.C.cyan}◈${exports.C.reset}  ${logoText}`;
-    const subText = `  AI Coding Agent  ·  GitHub Copilot  ·  Smithery Skills  ·  `;
-    const verText = `${exports.C.cyan}v${version}${exports.C.reset}`;
+    const subText = `  AI Coding Agent  ·  GitHub Copilot  ·  Smithery Skills  ·  v`;
+    const verText = `${exports.C.cyan}${version}${exports.C.reset}`;
     const subLine = `${exports.C.gray}${subText}${verText}${exports.C.reset}`;
     process.stdout.write('\n');
     console.log(`  ${boxTop()}`);

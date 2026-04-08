@@ -194,7 +194,7 @@ class SkillsManager {
                 '@modelcontextprotocol/sdk': '^1.0.0',
             },
             devDependencies: {
-                typescript: '^5.4.0',
+                typescript: '^5.7.0',
                 '@types/node': '^20.0.0',
                 'ts-node': '^10.9.0',
             },
@@ -354,7 +354,7 @@ server in IntelliCode. First build it, then add the entry to
 
 \`\`\`bash
 # Option A — run locally and register via the agent:
-# Ask the agent: "configure an MCP server named ${safeName} using node dist/index.js"
+# Ask IntelliCode: "configure an MCP server named ${safeName}, command: node, args: ['${outputDir}/dist/index.js']"
 
 # Option B — publish to Smithery and install via /skills:
 npx @smithery/cli@latest publish

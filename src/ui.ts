@@ -85,8 +85,8 @@ export function printBanner(version: string): void {
   const logoText = `${C.bold}${C.cyan}I N T E L L I C O D E${C.reset}`;
   const logoLine = `  ${C.cyan}◈${C.reset}  ${logoText}`;
 
-  const subText  = `  AI Coding Agent  ·  GitHub Copilot  ·  Smithery Skills  ·  `;
-  const verText  = `${C.cyan}v${version}${C.reset}`;
+  const subText  = `  AI Coding Agent  ·  GitHub Copilot  ·  Smithery Skills  ·  v`;
+  const verText  = `${C.cyan}${version}${C.reset}`;
   const subLine  = `${C.gray}${subText}${verText}${C.reset}`;
 
   process.stdout.write('\n');

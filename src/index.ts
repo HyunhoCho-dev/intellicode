@@ -638,7 +638,7 @@ async function handleSkillsCommand(
       );
     });
 
-    const defaultDir = path.join(process.cwd(), skillName.toLowerCase().replace(/[^a-z0-9-]/g, '-'));
+    const defaultDir = path.join(process.cwd(), skillsMgr.sanitizeName(skillName));
     const outputDir = await new Promise<string>((resolve) => {
       rl.question(
         `${C.gray}  Output directory [${defaultDir}]:${C.reset} `,
@@ -648,14 +648,17 @@ async function handleSkillsCommand(
 
     try {
       skillsMgr.scaffold(skillName, description, outputDir);
+      const safeName = skillsMgr.sanitizeName(skillName);
       console.log(
         `\n${C.green}  ✓ Skill scaffolded at:${C.reset} ${C.cyan}${outputDir}${C.reset}\n` +
         `\n${C.gray}  Next steps:${C.reset}\n` +
         `    ${C.cyan}cd ${outputDir}${C.reset}\n` +
         `    ${C.cyan}npm install${C.reset}\n` +
         `    ${C.cyan}npm run build${C.reset}\n` +
-        `\n${C.gray}  Edit ${C.reset}src/index.ts${C.gray} to add your tools, then:${C.reset}\n` +
-        `    ${C.cyan}/skills add ./${path.basename(outputDir)} ${skillName.toLowerCase().replace(/\s+/g, '-')}${C.reset}\n`
+        `\n${C.gray}  Edit ${C.reset}src/index.ts${C.gray} to add your tools, then publish to Smithery:${C.reset}\n` +
+        `    ${C.cyan}npx @smithery/cli@latest publish${C.reset}\n` +
+        `    ${C.gray}Then install in IntelliCode:${C.reset}\n` +
+        `    ${C.cyan}/skills add <your-smithery-id> ${safeName}${C.reset}\n`
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
