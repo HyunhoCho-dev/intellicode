@@ -24,7 +24,6 @@ export const C = {
   magenta: '\x1b[95m',  // bright magenta — skills accent
   bold:    '\x1b[1m',
   dim:     '\x1b[2m',
-  italic:  '\x1b[3m',
   reset:   '\x1b[0m',
 } as const;
 

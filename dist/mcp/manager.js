@@ -163,7 +163,7 @@ class McpServerInstance {
                     this.pending.delete(id);
                     reject(new Error(`MCP request "${method}" timed out after ${timeoutMs / 1000} s`));
                 }
-            }, 10000);
+            }, timeoutMs);
         });
     }
     /**

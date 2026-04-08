@@ -21,7 +21,6 @@ export declare const C: {
     readonly magenta: "\u001B[95m";
     readonly bold: "\u001B[1m";
     readonly dim: "\u001B[2m";
-    readonly italic: "\u001B[3m";
     readonly reset: "\u001B[0m";
 };
 /**

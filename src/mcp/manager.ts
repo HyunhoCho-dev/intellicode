@@ -191,7 +191,7 @@ class McpServerInstance {
             new Error(`MCP request "${method}" timed out after ${timeoutMs / 1000} s`)
           );
         }
-      }, 10_000);
+      }, timeoutMs);
     });
   }
 
