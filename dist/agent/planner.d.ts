@@ -17,6 +17,7 @@ export declare class Planner {
     private tools;
     private mcpManager;
     private memoryManager;
+    private skillsManager;
     private model;
     private thinkLevel;
     constructor(mcpManager: McpManager, memoryManager: MemoryManager, model?: string, thinkLevel?: ThinkLevel);

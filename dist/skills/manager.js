@@ -1,0 +1,458 @@
+"use strict";
+/**
+ * Smithery Skills Manager
+ *
+ * Provides integration with the Smithery MCP server registry for skill
+ * discovery, installation, removal, and creation.
+ *
+ * Key concepts:
+ *   - A "skill" in IntelliCode is a Smithery-registered MCP server that
+ *     extends the agent's capabilities with new tools.
+ *   - Skills are persisted in ~/.intellicode/skills.json, separate from
+ *     manually configured MCP servers (~/.intellicode/mcp.json).
+ *   - The Smithery registry API is used for discovery (no API key required
+ *     for read-only registry searches).
+ *
+ * Smithery Registry API: https://registry.smithery.ai/servers
+ */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.SkillsManager = void 0;
+const fs = __importStar(require("fs"));
+const os = __importStar(require("os"));
+const path = __importStar(require("path"));
+const https = __importStar(require("https"));
+// ─── Constants ─────────────────────────────────────────────────────────────────
+const SKILLS_CONFIG_FILE = path.join(os.homedir(), '.intellicode', 'skills.json');
+const SMITHERY_REGISTRY_BASE = 'registry.smithery.ai';
+// ─── SkillsManager ────────────────────────────────────────────────────────────
+/**
+ * Manages the lifecycle of Smithery skills:
+ *   - Discovery via the Smithery registry API
+ *   - Installation (persisting config + starting as an MCP server)
+ *   - Removal
+ *   - Interactive scaffolding of new skills
+ */
+class SkillsManager {
+    constructor(mcpManager) {
+        this.mcpManager = mcpManager;
+    }
+    // ─── Discovery ──────────────────────────────────────────────────────────────
+    /**
+     * Search the Smithery registry for MCP servers/skills matching the query.
+     *
+     * @param query  Search terms (e.g. "github", "filesystem", "web search").
+     * @param limit  Maximum number of results to return (default: 10).
+     * @returns      Array of matching Smithery server records.
+     * @throws       Error if the network request fails.
+     */
+    async search(query, limit = 10) {
+        const encodedQuery = encodeURIComponent(query.trim());
+        const urlPath = `/servers?q=${encodedQuery}&pageSize=${limit}&page=1`;
+        const raw = await this.httpsGet(SMITHERY_REGISTRY_BASE, urlPath);
+        const data = JSON.parse(raw);
+        return data.servers ?? [];
+    }
+    /**
+     * Fetch the top skills from the Smithery registry (sorted by popularity).
+     *
+     * @param limit  Maximum number of results (default: 10).
+     */
+    async listPopular(limit = 10) {
+        const urlPath = `/servers?pageSize=${limit}&page=1`;
+        const raw = await this.httpsGet(SMITHERY_REGISTRY_BASE, urlPath);
+        const data = JSON.parse(raw);
+        return data.servers ?? [];
+    }
+    // ─── Installed skill management ─────────────────────────────────────────────
+    /**
+     * Return all installed skills from the config file.
+     */
+    listInstalled() {
+        return this.readConfig();
+    }
+    /**
+     * Install a skill: persist it to skills.json and start it as an MCP server.
+     *
+     * @param qualifiedName  The Smithery server identifier (e.g. "@org/server").
+     * @param localName      A short local alias used to reference the skill.
+     * @param description    Optional description.
+     */
+    async install(qualifiedName, localName, description = '') {
+        const safeName = this.sanitizeName(localName);
+        const mcpConfig = {
+            name: safeName,
+            command: 'npx',
+            args: ['-y', `@smithery/cli@latest`, 'run', qualifiedName, '--client', 'claude'],
+            env: {},
+        };
+        // Persist before starting so the skill survives restarts even if startup fails
+        const skills = this.readConfig();
+        const existingIdx = skills.findIndex((s) => s.name === safeName);
+        const entry = {
+            name: safeName,
+            qualifiedName,
+            description,
+            installedAt: new Date().toISOString(),
+            mcpConfig,
+        };
+        if (existingIdx >= 0) {
+            skills[existingIdx] = entry;
+        }
+        else {
+            skills.push(entry);
+        }
+        this.writeConfig(skills);
+        // Start as an MCP server (may throw — caller handles the error)
+        await this.mcpManager.installAndStartServer(mcpConfig);
+    }
+    /**
+     * Remove an installed skill by local name.
+     * Also shuts down the MCP server if it is running.
+     *
+     * @param localName  The local alias of the skill to remove.
+     * @returns          `true` if the skill was found and removed; `false` otherwise.
+     */
+    remove(localName) {
+        const skills = this.readConfig();
+        const idx = skills.findIndex((s) => s.name === localName);
+        if (idx === -1)
+            return false;
+        skills.splice(idx, 1);
+        this.writeConfig(skills);
+        return true;
+    }
+    // ─── Skill scaffolding ──────────────────────────────────────────────────────
+    /**
+     * Scaffold a new local skill as a minimal MCP server TypeScript project.
+     *
+     * Creates the following structure under `outputDir/`:
+     *   <outputDir>/
+     *     package.json
+     *     tsconfig.json
+     *     src/index.ts        — MCP server entry point
+     *     README.md
+     *
+     * @param skillName   Human-readable skill name (used in package.json and README).
+     * @param description Short description for the skill.
+     * @param outputDir   Directory to create the project in.
+     */
+    scaffold(skillName, description, outputDir) {
+        const safeName = skillName
+            .toLowerCase()
+            .replace(/[^a-z0-9-]/g, '-')
+            .replace(/^-+|-+$/g, '')
+            || 'my-skill';
+        if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+        }
+        const srcDir = path.join(outputDir, 'src');
+        if (!fs.existsSync(srcDir)) {
+            fs.mkdirSync(srcDir, { recursive: true });
+        }
+        // package.json
+        const pkg = {
+            name: safeName,
+            version: '0.1.0',
+            description,
+            main: 'dist/index.js',
+            bin: { [safeName]: 'dist/index.js' },
+            scripts: {
+                build: 'tsc',
+                start: 'node dist/index.js',
+                dev: 'ts-node src/index.ts',
+            },
+            dependencies: {
+                '@modelcontextprotocol/sdk': '^1.0.0',
+            },
+            devDependencies: {
+                typescript: '^5.4.0',
+                '@types/node': '^20.0.0',
+                'ts-node': '^10.9.0',
+            },
+        };
+        fs.writeFileSync(path.join(outputDir, 'package.json'), JSON.stringify(pkg, null, 2) + '\n');
+        // tsconfig.json
+        const tsconfig = {
+            compilerOptions: {
+                target: 'ES2020',
+                module: 'commonjs',
+                lib: ['ES2020'],
+                outDir: './dist',
+                rootDir: './src',
+                strict: true,
+                esModuleInterop: true,
+                skipLibCheck: true,
+                forceConsistentCasingInFileNames: true,
+            },
+            include: ['src'],
+            exclude: ['node_modules', 'dist'],
+        };
+        fs.writeFileSync(path.join(outputDir, 'tsconfig.json'), JSON.stringify(tsconfig, null, 2) + '\n');
+        // src/index.ts — minimal MCP server template
+        const indexTs = `#!/usr/bin/env node
+/**
+ * ${skillName} — MCP Skill
+ *
+ * ${description}
+ *
+ * This is a minimal MCP (Model Context Protocol) server that exposes one
+ * example tool. Edit the tool definitions and handler below to add your
+ * own capabilities.
+ *
+ * Built with the official MCP TypeScript SDK:
+ *   https://github.com/modelcontextprotocol/typescript-sdk
+ */
+
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js';
+
+// ─── Tool definitions ───────────────────────────────────────────────────────
+
+/**
+ * Describe your skill's tools here.
+ * Each tool needs a name, description, and inputSchema (JSON Schema).
+ */
+const TOOLS = [
+  {
+    name: 'hello',
+    description: 'A simple example tool — greets a given name.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        name: {
+          type: 'string',
+          description: 'The name to greet.',
+        },
+      },
+      required: ['name'],
+    },
+  },
+];
+
+// ─── Tool handlers ──────────────────────────────────────────────────────────
+
+/**
+ * Execute the requested tool and return a text result.
+ *
+ * @param toolName  The name of the tool to execute.
+ * @param args      The validated tool arguments.
+ * @returns         A text response string.
+ * @throws          Error if the tool is unknown or arguments are invalid.
+ */
+async function handleToolCall(
+  toolName: string,
+  args: Record<string, unknown>
+): Promise<string> {
+  switch (toolName) {
+    case 'hello': {
+      const name = args['name'] as string;
+      if (!name?.trim()) {
+        throw new Error('The "name" argument is required and must be non-empty.');
+      }
+      return \`Hello, \${name.trim()}! This is the ${skillName} skill.\`;
+    }
+
+    default:
+      throw new Error(\`Unknown tool: "\${toolName}"\`);
+  }
+}
+
+// ─── Server setup ───────────────────────────────────────────────────────────
+
+async function main(): Promise<void> {
+  const server = new Server(
+    { name: '${safeName}', version: '0.1.0' },
+    { capabilities: { tools: {} } }
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: TOOLS,
+  }));
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: rawArgs } = request.params;
+    const args = (rawArgs ?? {}) as Record<string, unknown>;
+
+    try {
+      const text = await handleToolCall(name, args);
+      return { content: [{ type: 'text', text }] };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        content: [{ type: 'text', text: \`Error: \${msg}\` }],
+        isError: true,
+      };
+    }
+  });
+
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+main().catch((err) => {
+  process.stderr.write(\`Fatal: \${err instanceof Error ? err.message : String(err)}\\n\`);
+  process.exit(1);
+});
+`;
+        fs.writeFileSync(path.join(srcDir, 'index.ts'), indexTs);
+        // README.md
+        const readme = `# ${skillName}
+
+${description}
+
+## Overview
+
+This is an MCP (Model Context Protocol) skill for IntelliCode, built on the
+[Smithery](https://smithery.ai) ecosystem. It exposes tools that extend the
+IntelliCode agent's capabilities.
+
+## Getting Started
+
+\`\`\`bash
+npm install
+npm run build
+\`\`\`
+
+## Adding to IntelliCode
+
+Once your skill is ready, register it with IntelliCode:
+
+\`\`\`
+/skills add ./${safeName} ${safeName}
+\`\`\`
+
+Or reference the built entry point directly from \`~/.intellicode/skills.json\`.
+
+## Available Tools
+
+| Tool    | Description                  |
+|---------|------------------------------|
+| hello   | Greets a name (example tool) |
+
+## Publishing to Smithery
+
+To share your skill with the community, publish it to the Smithery registry:
+
+\`\`\`bash
+npx @smithery/cli@latest publish
+\`\`\`
+
+See [Smithery docs](https://smithery.ai/docs) for details.
+`;
+        fs.writeFileSync(path.join(outputDir, 'README.md'), readme);
+    }
+    // ─── Private helpers ─────────────────────────────────────────────────────────
+    /** Ensure the local name is safe for use as an identifier. */
+    sanitizeName(name) {
+        return (name
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]/g, '-')
+            .replace(/^-+|-+$/g, '')
+            || 'skill');
+    }
+    /** Read the skills config from disk, returning an empty array on failure. */
+    readConfig() {
+        try {
+            if (fs.existsSync(SKILLS_CONFIG_FILE)) {
+                const raw = JSON.parse(fs.readFileSync(SKILLS_CONFIG_FILE, 'utf-8'));
+                return raw.skills ?? [];
+            }
+        }
+        catch {
+            // Treat a corrupt config as empty
+        }
+        return [];
+    }
+    /** Persist the skills array to disk. */
+    writeConfig(skills) {
+        const dir = path.dirname(SKILLS_CONFIG_FILE);
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.writeFileSync(SKILLS_CONFIG_FILE, JSON.stringify({ skills }, null, 2), { mode: 0o600 });
+    }
+    /**
+     * Make a simple HTTPS GET request and return the response body as a string.
+     *
+     * Uses Node's built-in `https` module so no extra dependencies are needed.
+     *
+     * @param hostname  The target hostname (e.g. "registry.smithery.ai").
+     * @param urlPath   The path + query string (e.g. "/servers?q=github&pageSize=10").
+     * @param timeoutMs Request timeout in milliseconds (default: 10 000).
+     */
+    httpsGet(hostname, urlPath, timeoutMs = 10000) {
+        return new Promise((resolve, reject) => {
+            const options = {
+                hostname,
+                path: urlPath,
+                method: 'GET',
+                headers: {
+                    'Accept': 'application/json',
+                    'User-Agent': 'intellicode-agent/1.0',
+                },
+                timeout: timeoutMs,
+            };
+            const req = https.request(options, (res) => {
+                let body = '';
+                res.setEncoding('utf8');
+                res.on('data', (chunk) => { body += chunk; });
+                res.on('end', () => {
+                    if (res.statusCode !== undefined && res.statusCode >= 400) {
+                        reject(new Error(`Smithery registry returned HTTP ${res.statusCode}: ${body.slice(0, 200)}`));
+                    }
+                    else {
+                        resolve(body);
+                    }
+                });
+            });
+            req.on('timeout', () => {
+                req.destroy(new Error(`Request to ${hostname} timed out after ${timeoutMs} ms`));
+            });
+            req.on('error', (err) => reject(err));
+            req.end();
+        });
+    }
+    /** Return the path to the skills config file. */
+    static getConfigPath() {
+        return SKILLS_CONFIG_FILE;
+    }
+}
+exports.SkillsManager = SkillsManager;
+//# sourceMappingURL=manager.js.map
