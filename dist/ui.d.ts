@@ -28,7 +28,7 @@ export declare const C: {
  * @param version  package version string, e.g. "0.1.0"
  */
 export declare function printBanner(version: string): void;
-/** One-line hints shown right after the banner in interactive mode. */
+/** Hints panel shown right after the banner in interactive mode. */
 export declare function printWelcome(): void;
 /**
  * Create an animated thinking spinner.
@@ -39,9 +39,14 @@ export declare function createThinkingSpinner(): {
 };
 /**
  * Create an animated executing spinner (for tool calls).
- * Returns a `stop()` function that clears the spinner line.
+ * Returns a stop function that clears the spinner line.
  */
 export declare function createExecutingSpinner(): () => void;
+/**
+ * Create an animated installing spinner (for skill/package installs).
+ * Returns a stop function.
+ */
+export declare function createInstallingSpinner(label?: string): () => void;
 /**
  * The readline prompt string.
  * Renders as:  ❯  intellicode  ›

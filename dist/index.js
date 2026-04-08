@@ -505,16 +505,20 @@ async function handleSkillsCommand(input, mcpManager, rl) {
             .replace(/^server-/, '');
         const defaultName = skillsMgr.sanitizeName(rawDefault);
         const localName = parts[3] ?? defaultName;
-        console.log(`\n${ui_1.C.gray}  → Installing skill ${ui_1.C.reset}${ui_1.C.cyan}${qualifiedName}${ui_1.C.reset}${ui_1.C.gray} as "${localName}"…${ui_1.C.reset}`);
+        process.stdout.write('\n');
+        const stopSpinner = (0, ui_1.createInstallingSpinner)(`Installing ${qualifiedName} as "${localName}"…`);
         try {
             await skillsMgr.install(qualifiedName, localName);
-            console.log(`${ui_1.C.green}  ✓ Skill ${ui_1.C.reset}${ui_1.C.cyan}${localName}${ui_1.C.reset}${ui_1.C.green} installed!${ui_1.C.reset}\n` +
-                `${ui_1.C.gray}  Use the agent to invoke it, or ask: "use the ${localName} skill to…"${ui_1.C.reset}\n`);
+            stopSpinner();
+            console.log(`${ui_1.C.greenB}  ✓ Skill installed:${ui_1.C.reset}  ${ui_1.C.bold}${ui_1.C.cyan}${localName}${ui_1.C.reset}` +
+                `  ${ui_1.C.gray}(${qualifiedName})${ui_1.C.reset}\n` +
+                `${ui_1.C.gray}  ◦ Ask the agent: "use the ${localName} skill to…"${ui_1.C.reset}\n`);
         }
         catch (err) {
+            stopSpinner();
             const msg = err instanceof Error ? err.message : String(err);
             console.log(`${ui_1.C.red}  ✗ Failed to start skill: ${msg}${ui_1.C.reset}\n` +
-                `${ui_1.C.gray}  Config was saved — it will be retried on next launch.${ui_1.C.reset}\n`);
+                `${ui_1.C.gray}  ◦ Config was saved — it will be retried on next launch.${ui_1.C.reset}\n`);
         }
         return;
     }
