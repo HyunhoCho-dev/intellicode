@@ -105,8 +105,12 @@ export declare class SkillsManager {
      * @param outputDir   Directory to create the project in.
      */
     scaffold(skillName: string, description: string, outputDir: string): void;
-    /** Ensure the local name is safe for use as an identifier. */
-    private sanitizeName;
+    /**
+     * Normalize a raw string into a safe local skill identifier.
+     * Lowercases the input, replaces non-alphanumeric chars with hyphens,
+     * strips leading/trailing hyphens, and falls back to "skill" if empty.
+     */
+    sanitizeName(name: string): string;
     /** Read the skills config from disk, returning an empty array on failure. */
     private readConfig;
     /** Persist the skills array to disk. */

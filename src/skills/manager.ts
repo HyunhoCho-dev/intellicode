@@ -205,11 +205,7 @@ export class SkillsManager {
    * @param outputDir   Directory to create the project in.
    */
   scaffold(skillName: string, description: string, outputDir: string): void {
-    const safeName = skillName
-      .toLowerCase()
-      .replace(/[^a-z0-9-]/g, '-')
-      .replace(/^-+|-+$/g, '')
-      || 'my-skill';
+    const safeName = this.sanitizeName(skillName) || 'my-skill';
 
     if (!fs.existsSync(outputDir)) {
       fs.mkdirSync(outputDir, { recursive: true });
@@ -399,13 +395,19 @@ npm run build
 
 ## Adding to IntelliCode
 
-Once your skill is ready, register it with IntelliCode:
+Once your skill is ready, you can use it locally by registering it as an MCP
+server in IntelliCode. First build it, then add the entry to
+\`~/.intellicode/skills.json\` or publish it to Smithery:
 
-\`\`\`
-/skills add ./${safeName} ${safeName}
-\`\`\`
+\`\`\`bash
+# Option A — run locally and register via the agent:
+# Ask the agent: "configure an MCP server named ${safeName} using node dist/index.js"
 
-Or reference the built entry point directly from \`~/.intellicode/skills.json\`.
+# Option B — publish to Smithery and install via /skills:
+npx @smithery/cli@latest publish
+# Then in IntelliCode:
+# /skills add <your-smithery-qualifiedName> ${safeName}
+\`\`\`
 
 ## Available Tools
 
@@ -426,10 +428,14 @@ See [Smithery docs](https://smithery.ai/docs) for details.
     fs.writeFileSync(path.join(outputDir, 'README.md'), readme);
   }
 
-  // ─── Private helpers ─────────────────────────────────────────────────────────
+  // ─── Helpers (public for reuse by CLI command handlers) ─────────────────────
 
-  /** Ensure the local name is safe for use as an identifier. */
-  private sanitizeName(name: string): string {
+  /**
+   * Normalize a raw string into a safe local skill identifier.
+   * Lowercases the input, replaces non-alphanumeric chars with hyphens,
+   * strips leading/trailing hyphens, and falls back to "skill" if empty.
+   */
+  sanitizeName(name: string): string {
     return (
       name
         .toLowerCase()

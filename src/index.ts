@@ -579,14 +579,12 @@ async function handleSkillsCommand(
       console.log(`${C.red}  ✗ Usage:${C.reset} /skills add <qualifiedName> [localName]\n`);
       return;
     }
-    // Derive a sensible default local name from the qualified name
-    const defaultName = qualifiedName
+    // Derive a sensible default local name from the qualified name,
+    // stripping the scope prefix and "server-" prefix before sanitizing.
+    const rawDefault = qualifiedName
       .replace(/^@[^/]+\//, '')
-      .replace(/^server-/, '')
-      .replace(/[^a-z0-9_-]/gi, '-')
-      .replace(/^-+|-+$/g, '')
-      .toLowerCase()
-      || 'skill';
+      .replace(/^server-/, '');
+    const defaultName = skillsMgr.sanitizeName(rawDefault);
     const localName = parts[3] ?? defaultName;
 
     console.log(`\n${C.gray}  → Installing skill ${C.reset}${C.cyan}${qualifiedName}${C.reset}${C.gray} as "${localName}"…${C.reset}`);

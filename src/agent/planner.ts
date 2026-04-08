@@ -481,6 +481,8 @@ export class Planner {
             limit: {
               type: 'number',
               description: 'Maximum results to return (default: 8, max: 20).',
+              minimum: 1,
+              maximum: 20,
             },
           },
           required: ['query'],

@@ -498,14 +498,12 @@ async function handleSkillsCommand(input, mcpManager, rl) {
             console.log(`${ui_1.C.red}  ✗ Usage:${ui_1.C.reset} /skills add <qualifiedName> [localName]\n`);
             return;
         }
-        // Derive a sensible default local name from the qualified name
-        const defaultName = qualifiedName
+        // Derive a sensible default local name from the qualified name,
+        // stripping the scope prefix and "server-" prefix before sanitizing.
+        const rawDefault = qualifiedName
             .replace(/^@[^/]+\//, '')
-            .replace(/^server-/, '')
-            .replace(/[^a-z0-9_-]/gi, '-')
-            .replace(/^-+|-+$/g, '')
-            .toLowerCase()
-            || 'skill';
+            .replace(/^server-/, '');
+        const defaultName = skillsMgr.sanitizeName(rawDefault);
         const localName = parts[3] ?? defaultName;
         console.log(`\n${ui_1.C.gray}  → Installing skill ${ui_1.C.reset}${ui_1.C.cyan}${qualifiedName}${ui_1.C.reset}${ui_1.C.gray} as "${localName}"…${ui_1.C.reset}`);
         try {
