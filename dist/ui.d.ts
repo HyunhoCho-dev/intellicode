@@ -21,6 +21,7 @@ export declare const C: {
     readonly magenta: "\u001B[95m";
     readonly bold: "\u001B[1m";
     readonly dim: "\u001B[2m";
+    readonly italic: "\u001B[3m";
     readonly reset: "\u001B[0m";
 };
 /**
@@ -28,7 +29,7 @@ export declare const C: {
  * @param version  package version string, e.g. "0.1.0"
  */
 export declare function printBanner(version: string): void;
-/** One-line hints shown right after the banner in interactive mode. */
+/** Hints panel shown right after the banner in interactive mode. */
 export declare function printWelcome(): void;
 /**
  * Create an animated thinking spinner.
@@ -39,9 +40,14 @@ export declare function createThinkingSpinner(): {
 };
 /**
  * Create an animated executing spinner (for tool calls).
- * Returns a `stop()` function that clears the spinner line.
+ * Returns a stop function that clears the spinner line.
  */
 export declare function createExecutingSpinner(): () => void;
+/**
+ * Create an animated installing spinner (for skill/package installs).
+ * Returns a stop function.
+ */
+export declare function createInstallingSpinner(label?: string): () => void;
 /**
  * The readline prompt string.
  * Renders as:  ❯  intellicode  ›

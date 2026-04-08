@@ -8,12 +8,24 @@
 import { ToolDefinition } from '../providers/github-copilot';
 /**
  * On Windows, Node/npm CLI executables are installed as `.cmd` batch files
- * (e.g. `npx.cmd`, `pnpm.cmd`).  Node's `child_process.spawn` does NOT
- * search for `.cmd` files unless `shell: true` is used, which causes the
- * dreaded `spawn npx ENOENT` error.  This helper appends the `.cmd` suffix on
- * Windows for common Node-ecosystem binaries so they can be spawned directly.
+ * (e.g. `npx.cmd`, `pnpm.cmd`).  When spawning a process directly (without
+ * `shell: true`), Node.js cannot execute `.cmd` files and raises `EINVAL`.
+ *
+ * Resolution strategy:
+ *   - On Windows we always spawn with `{ shell: true }` so that `cmd.exe`
+ *     handles `.cmd` resolution automatically — no manual suffix needed.
+ *   - On non-Windows platforms we keep `shell: false` for security and
+ *     predictability.
+ *
+ * `resolveCommand` is retained for completeness / external callers but the
+ * `.cmd` suffix is no longer required when `useShell()` returns `true`.
  */
 export declare function resolveCommand(command: string): string;
+/**
+ * Whether to use `{ shell: true }` when spawning child processes.
+ * Required on Windows so that `.cmd` wrapper scripts (npx, npm, …) work.
+ */
+export declare function useShell(): boolean;
 export interface McpServerConfig {
     /** Human-readable name for the server. */
     name: string;

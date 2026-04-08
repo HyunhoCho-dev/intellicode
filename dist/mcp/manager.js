@@ -42,26 +42,44 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.McpManager = void 0;
 exports.resolveCommand = resolveCommand;
+exports.useShell = useShell;
 const child_process = __importStar(require("child_process"));
 const fs = __importStar(require("fs"));
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+// ─── Spawn timeout ────────────────────────────────────────────────────────────
+/**
+ * How long (ms) to wait for an MCP server process to start and respond to the
+ * `initialize` handshake.  Smithery skills downloaded via npx may take
+ * several seconds to fetch and boot, so we use a generous 60 s timeout.
+ */
+const MCP_INIT_TIMEOUT_MS = 60000;
 // ─── Platform helpers ─────────────────────────────────────────────────────────
 /**
  * On Windows, Node/npm CLI executables are installed as `.cmd` batch files
- * (e.g. `npx.cmd`, `pnpm.cmd`).  Node's `child_process.spawn` does NOT
- * search for `.cmd` files unless `shell: true` is used, which causes the
- * dreaded `spawn npx ENOENT` error.  This helper appends the `.cmd` suffix on
- * Windows for common Node-ecosystem binaries so they can be spawned directly.
+ * (e.g. `npx.cmd`, `pnpm.cmd`).  When spawning a process directly (without
+ * `shell: true`), Node.js cannot execute `.cmd` files and raises `EINVAL`.
+ *
+ * Resolution strategy:
+ *   - On Windows we always spawn with `{ shell: true }` so that `cmd.exe`
+ *     handles `.cmd` resolution automatically — no manual suffix needed.
+ *   - On non-Windows platforms we keep `shell: false` for security and
+ *     predictability.
+ *
+ * `resolveCommand` is retained for completeness / external callers but the
+ * `.cmd` suffix is no longer required when `useShell()` returns `true`.
  */
 function resolveCommand(command) {
-    if (os.platform() === 'win32') {
-        const nodeClis = ['npx', 'npm', 'pnpm', 'yarn', 'node', 'tsc', 'ts-node'];
-        if (nodeClis.includes(command.toLowerCase())) {
-            return command + '.cmd';
-        }
-    }
+    // On Windows with shell:true, cmd.exe finds .cmd files automatically.
+    // We still keep the helper in case callers need the raw resolved name.
     return command;
+}
+/**
+ * Whether to use `{ shell: true }` when spawning child processes.
+ * Required on Windows so that `.cmd` wrapper scripts (npx, npm, …) work.
+ */
+function useShell() {
+    return os.platform() === 'win32';
 }
 // ─── Live server instance ──────────────────────────────────────────────────────
 class McpServerInstance {
@@ -71,20 +89,38 @@ class McpServerInstance {
         this.idCounter = 1;
         this.tools = [];
         this.serverName = config.name;
-        this.proc = child_process.spawn(resolveCommand(config.command), config.args ?? [], {
+        const shell = useShell();
+        this.proc = child_process.spawn(config.command, config.args ?? [], {
             env: { ...process.env, ...(config.env ?? {}) },
             stdio: ['pipe', 'pipe', 'pipe'],
+            // Windows: shell:true is required to run .cmd wrapper scripts (npx, npm…)
+            // without triggering EINVAL.  On other platforms we skip it for security.
+            shell,
         });
         this.proc.stdout.on('data', (data) => {
             this.buffer += data.toString();
             this.processBuffer();
         });
         this.proc.stderr.on('data', (data) => {
-            // Log server stderr to our stderr for debugging
-            process.stderr.write(`[MCP:${config.name}] ${data.toString()}`);
+            // Log server stderr to our stderr for debugging (suppress in non-TTY)
+            if (process.stderr.isTTY) {
+                process.stderr.write(`[MCP:${config.name}] ${data.toString()}`);
+            }
         });
         this.proc.on('error', (err) => {
-            console.error(`[MCP:${config.name}] Process error: ${err.message}`);
+            // Surface spawn errors (ENOENT, EINVAL, …) to pending requests so the
+            // caller gets a meaningful rejection instead of a silent timeout.
+            const detail = err.code === 'ENOENT'
+                ? `command not found: "${config.command}"`
+                : err.code === 'EINVAL'
+                    ? `invalid spawn arguments — on Windows, ensure Node.js is in PATH`
+                    : err.message;
+            const spawnError = new Error(`Failed to start MCP server "${config.name}": ${detail}`);
+            // Reject all pending promises so they don't hang until timeout
+            for (const [id, handlers] of this.pending) {
+                this.pending.delete(id);
+                handlers.reject(spawnError);
+            }
         });
     }
     processBuffer() {
@@ -112,7 +148,7 @@ class McpServerInstance {
             }
         }
     }
-    send(method, params) {
+    send(method, params, timeoutMs = 10000) {
         return new Promise((resolve, reject) => {
             if (!this.proc.stdin || this.proc.stdin.destroyed || !this.proc.stdin.writable) {
                 reject(new Error(`Cannot send "${method}" to MCP server "${this.serverName}": stdin is not writable`));
@@ -122,22 +158,27 @@ class McpServerInstance {
             const msg = { jsonrpc: '2.0', id, method, params };
             this.pending.set(id, { resolve, reject });
             this.proc.stdin.write(JSON.stringify(msg) + '\n');
-            // Timeout after 10 seconds
             setTimeout(() => {
                 if (this.pending.has(id)) {
                     this.pending.delete(id);
-                    reject(new Error(`MCP request "${method}" timed out after 10 s`));
+                    reject(new Error(`MCP request "${method}" timed out after ${timeoutMs / 1000} s`));
                 }
             }, 10000);
         });
     }
+    /**
+     * Perform the MCP handshake with the server process.
+     *
+     * Uses a generous timeout (`MCP_INIT_TIMEOUT_MS`) because skills installed
+     * via `npx` may need to download the package before the process is ready.
+     */
     async initialize() {
         await this.send('initialize', {
             protocolVersion: '2024-11-05',
             capabilities: { tools: {} },
             clientInfo: { name: 'intellicode', version: '0.1.0' },
-        });
-        await this.send('notifications/initialized');
+        }, MCP_INIT_TIMEOUT_MS);
+        await this.send('notifications/initialized', undefined, MCP_INIT_TIMEOUT_MS);
         await this.refreshTools();
     }
     async refreshTools() {

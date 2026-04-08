@@ -42,6 +42,7 @@ import {
   printSkillsSearch,
   printInstalledSkills,
   createThinkingSpinner,
+  createInstallingSpinner,
   PROMPT,
 } from './ui';
 
@@ -587,18 +588,24 @@ async function handleSkillsCommand(
     const defaultName = skillsMgr.sanitizeName(rawDefault);
     const localName = parts[3] ?? defaultName;
 
-    console.log(`\n${C.gray}  → Installing skill ${C.reset}${C.cyan}${qualifiedName}${C.reset}${C.gray} as "${localName}"…${C.reset}`);
+    process.stdout.write('\n');
+    const stopSpinner = createInstallingSpinner(
+      `Installing ${qualifiedName} as "${localName}"…`
+    );
     try {
       await skillsMgr.install(qualifiedName, localName);
+      stopSpinner();
       console.log(
-        `${C.green}  ✓ Skill ${C.reset}${C.cyan}${localName}${C.reset}${C.green} installed!${C.reset}\n` +
-        `${C.gray}  Use the agent to invoke it, or ask: "use the ${localName} skill to…"${C.reset}\n`
+        `${C.greenB}  ✓ Skill installed:${C.reset}  ${C.bold}${C.cyan}${localName}${C.reset}` +
+        `  ${C.gray}(${qualifiedName})${C.reset}\n` +
+        `${C.gray}  ◦ Ask the agent: "use the ${localName} skill to…"${C.reset}\n`
       );
     } catch (err) {
+      stopSpinner();
       const msg = err instanceof Error ? err.message : String(err);
       console.log(
         `${C.red}  ✗ Failed to start skill: ${msg}${C.reset}\n` +
-        `${C.gray}  Config was saved — it will be retried on next launch.${C.reset}\n`
+        `${C.gray}  ◦ Config was saved — it will be retried on next launch.${C.reset}\n`
       );
     }
     return;
