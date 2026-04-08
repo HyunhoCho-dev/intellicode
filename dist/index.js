@@ -56,6 +56,7 @@ const github_copilot_1 = require("./providers/github-copilot");
 const planner_1 = require("./agent/planner");
 const manager_1 = require("./mcp/manager");
 const manager_2 = require("./memory/manager");
+const manager_3 = require("./skills/manager");
 const ui_1 = require("./ui");
 // ─── Package metadata ──────────────────────────────────────────────────────────
 const PKG_PATH = path.join(__dirname, '..', 'package.json');
@@ -112,12 +113,15 @@ async function runRepl(planner, mcpManager, memoryManager) {
         }
         if (input === '/status') {
             const configs = mcpManager.getConfigs();
+            const skillsMgr = new manager_3.SkillsManager(mcpManager);
+            const installedSkills = skillsMgr.listInstalled();
             (0, ui_1.printStatus)({
                 model: planner.getModel(),
                 thinkLevel: planner.getThinkLevelDescription(),
                 memories: memoryManager.size,
                 history: planner.historyLength,
                 mcpServers: configs.map((c) => c.name),
+                skills: installedSkills.map((s) => s.name),
             });
             rl.prompt();
             return;
@@ -158,10 +162,10 @@ async function runRepl(planner, mcpManager, memoryManager) {
             rl.prompt();
             return;
         }
-        // ── /penpot command ───────────────────────────────────────────────────────
-        if (input.startsWith('/penpot')) {
+        // ── /skills command ───────────────────────────────────────────────────────
+        if (input.startsWith('/skills')) {
             rl.pause();
-            await handlePenpotCommand(input, mcpManager, memoryManager, rl);
+            await handleSkillsCommand(input, mcpManager, rl);
             rl.resume();
             rl.prompt();
             return;
@@ -445,125 +449,134 @@ async function handleMcpReplCommand(input, mcpManager) {
     console.log(`${ui_1.C.red}  ✗ Unknown /mcp subcommand.${ui_1.C.reset}\n` +
         '  Usage:\n    /mcp list\n    /mcp install <package> [name]\n');
 }
-// ─── /penpot ──────────────────────────────────────────────────────────────────
-const PENPOT_SERVER_NAME = 'penpot';
-const PENPOT_DEFAULT_BASE_URL = 'https://design.penpot.app';
-async function handlePenpotCommand(input, mcpManager, memoryManager, rl) {
+// ─── /skills ──────────────────────────────────────────────────────────────────
+async function handleSkillsCommand(input, mcpManager, rl) {
     const parts = input.split(/\s+/);
     const sub = parts[1]?.toLowerCase();
-    if (!sub || sub === 'help') {
-        console.log(`
-${ui_1.C.cyan}  Penpot MCP Integration${ui_1.C.reset}
-
-  Penpot is an open-source design tool. IntelliCode can connect to Penpot's
-  MCP server and autonomously create UI/UX designs, then generate code.
-
-${ui_1.C.cyan}  Commands:${ui_1.C.reset}
-    /penpot connect   Guided Penpot MCP setup
-    /penpot status    Show Penpot connection status
-    /penpot help      Show this message
-
-${ui_1.C.cyan}  Workflow:${ui_1.C.reset}
-    1. Run ${ui_1.C.cyan}/penpot connect${ui_1.C.reset} and provide your Penpot access token.
-    2. Ask the agent to design something, e.g.:
-         ${ui_1.C.gray}"Design a login page and generate React code from the design"${ui_1.C.reset}
-    3. The agent creates the design in Penpot, inspects it, and writes
-       pixel-perfect code that matches your design.
-
-${ui_1.C.cyan}  Get a Penpot token:${ui_1.C.reset}
-    Log in at ${ui_1.C.cyanD}https://design.penpot.app${ui_1.C.reset} → Profile → Access tokens → New token
-    ${ui_1.C.gray}(For self-hosted Penpot, use your own base URL.)${ui_1.C.reset}
-`);
+    const skillsMgr = new manager_3.SkillsManager(mcpManager);
+    // ── /skills list ──
+    if (!sub || sub === 'list') {
+        const skills = skillsMgr.listInstalled();
+        (0, ui_1.printInstalledSkills)(skills);
         return;
     }
-    if (sub === 'status') {
-        const configs = mcpManager.getConfigs();
-        const penpot = configs.find((c) => c.name === PENPOT_SERVER_NAME);
-        if (penpot) {
-            const baseUrl = penpot.env?.['PENPOT_BASE_URL'] ?? PENPOT_DEFAULT_BASE_URL;
-            console.log(`${ui_1.C.green}  ✓ Penpot MCP is configured${ui_1.C.reset}\n` +
-                `  Base URL : ${ui_1.C.cyan}${baseUrl}${ui_1.C.reset}\n` +
-                `  Token    : ${ui_1.C.gray}(stored)${ui_1.C.reset}\n`);
-        }
-        else {
-            console.log(`${ui_1.C.yellow}  ⚠  Penpot MCP is not configured.${ui_1.C.reset}\n` +
-                `  Run ${ui_1.C.cyan}/penpot connect${ui_1.C.reset} to set it up.\n`);
-        }
-        return;
-    }
-    if (sub === 'connect') {
-        console.log(`\n${ui_1.C.cyan}  Penpot MCP Setup${ui_1.C.reset}\n`);
-        // Try to load a previously stored token from long-term memory
-        const storedToken = memoryManager.get('penpot_access_token');
-        const storedBaseUrl = memoryManager.get('penpot_base_url') ?? PENPOT_DEFAULT_BASE_URL;
-        let token = storedToken ?? '';
-        let baseUrl = storedBaseUrl;
-        await new Promise((resolve) => {
-            const askBaseUrl = () => {
-                rl.question(`${ui_1.C.gray}  Penpot base URL [${baseUrl}]:${ui_1.C.reset} `, (ans) => {
-                    const trimmed = ans.trim();
-                    if (trimmed)
-                        baseUrl = trimmed;
-                    askToken();
-                });
-            };
-            const askToken = () => {
-                // Don't reveal any characters of a stored token — just indicate one exists
-                const hint = token ? `${ui_1.C.gray} [token already set — press Enter to keep]${ui_1.C.reset}` : '';
-                rl.question(`${ui_1.C.gray}  Penpot access token${ui_1.C.reset}${hint}${ui_1.C.gray}:${ui_1.C.reset} `, (ans) => {
-                    const trimmed = ans.trim();
-                    if (trimmed)
-                        token = trimmed;
-                    resolve();
-                });
-            };
-            askBaseUrl();
-        });
-        if (!token) {
-            console.log(`${ui_1.C.red}  ✗ No token provided. Penpot setup cancelled.${ui_1.C.reset}\n`);
+    // ── /skills search <query> ──
+    if (sub === 'search') {
+        const query = parts.slice(2).join(' ').trim();
+        if (!query) {
+            console.log(`${ui_1.C.red}  ✗ Usage:${ui_1.C.reset} /skills search <query>\n`);
             return;
         }
-        // Persist to long-term memory so future sessions reuse the credentials
-        memoryManager.set('penpot_access_token', token);
-        memoryManager.set('penpot_base_url', baseUrl);
-        console.log(`${ui_1.C.gray}  → Starting Penpot MCP server…${ui_1.C.reset}`);
-        // ── Prerequisite: ensure pnpm is installed ────────────────────────────
-        const { executeCommand: execCmd } = await Promise.resolve().then(() => __importStar(require('./tools/shell')));
-        const pnpmCheck = await execCmd(`${(0, manager_1.resolveCommand)('pnpm')} --version`, undefined, 5000);
-        if (pnpmCheck.exitCode !== 0) {
-            console.log(`${ui_1.C.gray}  → pnpm not found — installing automatically…${ui_1.C.reset}`);
-            const pnpmInstall = await execCmd(`${(0, manager_1.resolveCommand)('npm')} install -g pnpm`, undefined, 60000);
-            if (pnpmInstall.exitCode === 0) {
-                console.log(`${ui_1.C.green}  ✓ pnpm installed${ui_1.C.reset}`);
-            }
-            else {
-                console.log(`${ui_1.C.yellow}  ⚠  Could not install pnpm automatically — falling back to npx${ui_1.C.reset}`);
-            }
-        }
+        console.log(`\n${ui_1.C.gray}  → Searching Smithery registry for "${query}"…${ui_1.C.reset}`);
         try {
-            await mcpManager.installAndStartServer({
-                name: PENPOT_SERVER_NAME,
-                command: 'npx',
-                args: ['-y', '@penpot/mcp'],
-                env: {
-                    PENPOT_ACCESS_TOKEN: token,
-                    PENPOT_BASE_URL: baseUrl,
-                },
-            });
-            console.log(`${ui_1.C.green}  ✓ Penpot MCP connected!${ui_1.C.reset}\n` +
-                `  Base URL : ${ui_1.C.cyan}${baseUrl}${ui_1.C.reset}\n` +
-                `\n${ui_1.C.gray}  You can now ask the agent to design UI/UX and it will use Penpot.${ui_1.C.reset}\n`);
+            const results = await skillsMgr.search(query, 10);
+            (0, ui_1.printSkillsSearch)(results, `Search: "${query}"`);
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
-            console.log(`${ui_1.C.red}  ✗ Failed to start Penpot MCP server: ${msg}${ui_1.C.reset}\n` +
-                `${ui_1.C.gray}  The configuration was saved — it will be retried on the next launch.\n` +
-                `  Make sure @penpot/mcp is accessible via npx (requires Node.js 18+).${ui_1.C.reset}\n`);
+            console.log(`${ui_1.C.red}  ✗ Search failed: ${msg}${ui_1.C.reset}\n`);
         }
         return;
     }
-    console.log(`${ui_1.C.red}  ✗ Unknown /penpot subcommand.${ui_1.C.reset}\n` +
-        '  Usage:\n    /penpot connect\n    /penpot status\n    /penpot help\n');
+    // ── /skills popular ──
+    if (sub === 'popular') {
+        console.log(`\n${ui_1.C.gray}  → Fetching popular skills from Smithery…${ui_1.C.reset}`);
+        try {
+            const results = await skillsMgr.listPopular(12);
+            (0, ui_1.printSkillsSearch)(results, 'Popular Skills');
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.log(`${ui_1.C.red}  ✗ Could not fetch popular skills: ${msg}${ui_1.C.reset}\n`);
+        }
+        return;
+    }
+    // ── /skills add <qualifiedName> [localName] ──
+    if (sub === 'add') {
+        const qualifiedName = parts[2];
+        if (!qualifiedName) {
+            console.log(`${ui_1.C.red}  ✗ Usage:${ui_1.C.reset} /skills add <qualifiedName> [localName]\n`);
+            return;
+        }
+        // Derive a sensible default local name from the qualified name,
+        // stripping the scope prefix and "server-" prefix before sanitizing.
+        const rawDefault = qualifiedName
+            .replace(/^@[^/]+\//, '')
+            .replace(/^server-/, '');
+        const defaultName = skillsMgr.sanitizeName(rawDefault);
+        const localName = parts[3] ?? defaultName;
+        console.log(`\n${ui_1.C.gray}  → Installing skill ${ui_1.C.reset}${ui_1.C.cyan}${qualifiedName}${ui_1.C.reset}${ui_1.C.gray} as "${localName}"…${ui_1.C.reset}`);
+        try {
+            await skillsMgr.install(qualifiedName, localName);
+            console.log(`${ui_1.C.green}  ✓ Skill ${ui_1.C.reset}${ui_1.C.cyan}${localName}${ui_1.C.reset}${ui_1.C.green} installed!${ui_1.C.reset}\n` +
+                `${ui_1.C.gray}  Use the agent to invoke it, or ask: "use the ${localName} skill to…"${ui_1.C.reset}\n`);
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.log(`${ui_1.C.red}  ✗ Failed to start skill: ${msg}${ui_1.C.reset}\n` +
+                `${ui_1.C.gray}  Config was saved — it will be retried on next launch.${ui_1.C.reset}\n`);
+        }
+        return;
+    }
+    // ── /skills remove <localName> ──
+    if (sub === 'remove' || sub === 'rm' || sub === 'uninstall') {
+        const localName = parts[2];
+        if (!localName) {
+            console.log(`${ui_1.C.red}  ✗ Usage:${ui_1.C.reset} /skills remove <name>\n`);
+            return;
+        }
+        const removed = skillsMgr.remove(localName);
+        if (removed) {
+            console.log(`${ui_1.C.green}  ✓ Skill "${localName}" removed.${ui_1.C.reset}\n`);
+        }
+        else {
+            console.log(`${ui_1.C.gray}  ◦ No skill named "${localName}" found.${ui_1.C.reset}\n`);
+        }
+        return;
+    }
+    // ── /skills create <name> ──
+    if (sub === 'create' || sub === 'new') {
+        const skillName = parts.slice(2).join(' ').trim();
+        if (!skillName) {
+            console.log(`${ui_1.C.red}  ✗ Usage:${ui_1.C.reset} /skills create <name>\n`);
+            return;
+        }
+        console.log(`\n${ui_1.C.cyan}  Create New Skill${ui_1.C.reset}\n`);
+        // Interactive prompts
+        const description = await new Promise((resolve) => {
+            rl.question(`${ui_1.C.gray}  Description (optional):${ui_1.C.reset} `, (ans) => resolve(ans.trim()));
+        });
+        const defaultDir = path.join(process.cwd(), skillsMgr.sanitizeName(skillName));
+        const outputDir = await new Promise((resolve) => {
+            rl.question(`${ui_1.C.gray}  Output directory [${defaultDir}]:${ui_1.C.reset} `, (ans) => resolve(ans.trim() || defaultDir));
+        });
+        try {
+            skillsMgr.scaffold(skillName, description, outputDir);
+            const safeName = skillsMgr.sanitizeName(skillName);
+            console.log(`\n${ui_1.C.green}  ✓ Skill scaffolded at:${ui_1.C.reset} ${ui_1.C.cyan}${outputDir}${ui_1.C.reset}\n` +
+                `\n${ui_1.C.gray}  Next steps:${ui_1.C.reset}\n` +
+                `    ${ui_1.C.cyan}cd ${outputDir}${ui_1.C.reset}\n` +
+                `    ${ui_1.C.cyan}npm install${ui_1.C.reset}\n` +
+                `    ${ui_1.C.cyan}npm run build${ui_1.C.reset}\n` +
+                `\n${ui_1.C.gray}  Edit ${ui_1.C.reset}src/index.ts${ui_1.C.gray} to add your tools, then publish to Smithery:${ui_1.C.reset}\n` +
+                `    ${ui_1.C.cyan}npx @smithery/cli@latest publish${ui_1.C.reset}\n` +
+                `    ${ui_1.C.gray}Then install in IntelliCode:${ui_1.C.reset}\n` +
+                `    ${ui_1.C.cyan}/skills add <your-smithery-id> ${safeName}${ui_1.C.reset}\n`);
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.log(`${ui_1.C.red}  ✗ Scaffold failed: ${msg}${ui_1.C.reset}\n`);
+        }
+        return;
+    }
+    console.log(`${ui_1.C.red}  ✗ Unknown /skills subcommand.${ui_1.C.reset}\n` +
+        '  Usage:\n' +
+        '    /skills list\n' +
+        '    /skills search <query>\n' +
+        '    /skills popular\n' +
+        '    /skills add <qualifiedName> [localName]\n' +
+        '    /skills remove <name>\n' +
+        '    /skills create <name>\n');
 }
 async function runSinglePrompt(prompt, planner) {
     try {

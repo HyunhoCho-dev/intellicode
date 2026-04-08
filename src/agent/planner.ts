@@ -17,9 +17,10 @@ import {
   ToolCall,
 } from '../providers/github-copilot';
 import { fsTools, FsTool } from '../tools/fs';
-import { shellTools, ShellTool, executeCommand } from '../tools/shell';
+import { shellTools, ShellTool } from '../tools/shell';
 import { McpManager } from '../mcp/manager';
 import { MemoryManager } from '../memory/manager';
+import { SkillsManager } from '../skills/manager';
 import { createExecutingSpinner } from '../ui';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -179,23 +180,22 @@ When presenting code to the user, briefly note:
 - After calling mcp_configure, the new tools will be available in your next turn.
 
 ════════════════════════════════════════════════════════════════════
-  Penpot MCP Integration (UI/UX Design → Code workflow)
+  Smithery Skills Integration
 ════════════════════════════════════════════════════════════════════
 
-- Penpot is an open-source design tool. Its MCP server lets you create and manipulate designs programmatically.
-- When the user asks for UI/UX design, front-end components, or visual mockups, use the Penpot MCP server.
-- If the Penpot MCP server is not yet running, install and configure it autonomously:
-    1. Call mcp_configure with: name="penpot", command="npx", args=["-y", "@penpot/mcp"],
-       env={"PENPOT_ACCESS_TOKEN": "<token>", "PENPOT_BASE_URL": "https://design.penpot.app"}
-    2. Ask the user for their Penpot access token if not already stored in memory.
-    3. Once configured, use mcp__penpot__* tools to create frames, shapes, and design components.
-- Penpot design → code workflow:
-    a. Use Penpot MCP tools to create the design (frames, components, colors, typography).
-    b. Retrieve the design structure (layers, dimensions, styles) from Penpot.
-    c. Use that structure as the definitive specification to generate clean, pixel-perfect code
-       (React, Vue, HTML/CSS, etc.) that exactly matches the design.
-- Always generate code that faithfully implements the Penpot design — use the exact colors, spacing,
-  font sizes, and layout from the design file rather than guessing.`;
+- Smithery (https://smithery.ai) is an ecosystem of MCP servers ("skills") that extend
+  AI agent capabilities — web search, file processing, APIs, and more.
+- You have access to skills_search and skills_load tools to discover and install skills.
+- When a user asks for a capability that might be available as a Smithery skill, proactively
+  search the registry and suggest relevant options.
+- To add a new skill:
+    1. Call skills_search with relevant keywords (e.g. "web search", "github", "database").
+    2. Present the top results to the user, including name, description, and qualifiedName.
+    3. Once the user confirms, call skills_load with the qualifiedName to install and activate it.
+- After skills_load succeeds, the skill's tools are available as mcp__<name>__* tools.
+- You can also help users CREATE new skills. When asked, use execute_command and write_file to
+  scaffold a new MCP server project, then guide the user through development and publishing.
+- Remember: every Smithery skill is an MCP server — once installed, use mcp__ tools to call it.`;
 
 // ─── Planner class ────────────────────────────────────────────────────────────
 
@@ -208,6 +208,7 @@ export class Planner {
   private tools: AnyTool[] = [...fsTools, ...shellTools];
   private mcpManager: McpManager;
   private memoryManager: MemoryManager;
+  private skillsManager: SkillsManager;
   private model: string = 'gpt-4o';
   private thinkLevel: ThinkLevel = 'medium';
 
@@ -219,6 +220,7 @@ export class Planner {
   ) {
     this.mcpManager = mcpManager;
     this.memoryManager = memoryManager;
+    this.skillsManager = new SkillsManager(mcpManager);
     if (model) this.model = model;
     if (thinkLevel) this.thinkLevel = thinkLevel;
   }
@@ -460,8 +462,66 @@ export class Planner {
       },
     };
 
+    // Tool: search Smithery registry for skills/MCP servers
+    const skillsSearchTool: ToolDefinition = {
+      type: 'function',
+      function: {
+        name: 'skills_search',
+        description:
+          'Search the Smithery registry for MCP server skills matching a keyword query. ' +
+          'Returns a list of available skills (name, description, qualifiedName). ' +
+          'Use this to discover new capabilities before calling skills_load.',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: {
+              type: 'string',
+              description: 'Search terms (e.g. "web search", "github", "database", "filesystem").',
+            },
+            limit: {
+              type: 'number',
+              description: 'Maximum results to return (default: 8, max: 20).',
+              minimum: 1,
+              maximum: 20,
+            },
+          },
+          required: ['query'],
+        },
+      },
+    };
+
+    // Tool: install a Smithery skill and make it available immediately
+    const skillsLoadTool: ToolDefinition = {
+      type: 'function',
+      function: {
+        name: 'skills_load',
+        description:
+          'Install and activate a Smithery skill so its tools become available immediately. ' +
+          'The qualifiedName comes from skills_search results (e.g. "@exa-labs/exa-mcp-server"). ' +
+          'After this call succeeds, use mcp__<localName>__* tools to invoke the skill.',
+        parameters: {
+          type: 'object',
+          properties: {
+            qualifiedName: {
+              type: 'string',
+              description: 'The Smithery server qualifiedName from skills_search (e.g. "@exa-labs/exa-mcp-server").',
+            },
+            localName: {
+              type: 'string',
+              description: 'A short local alias for the skill (e.g. "exa", "brave-search"). Must be unique.',
+            },
+            description: {
+              type: 'string',
+              description: 'Brief description of what this skill does (optional but recommended).',
+            },
+          },
+          required: ['qualifiedName', 'localName'],
+        },
+      },
+    };
+
     const mcpDefs = this.mcpManager.getToolDefinitions();
-    return [...builtIn, mcpConfigureTool, memoryStoreTool, ...mcpDefs];
+    return [...builtIn, mcpConfigureTool, memoryStoreTool, skillsSearchTool, skillsLoadTool, ...mcpDefs];
   }
 
   /**
@@ -502,35 +562,6 @@ export class Planner {
         }
 
         const configuredEnv = (args['env'] as Record<string, string> | undefined) ?? {};
-
-        // ── Penpot-specific pre-flight setup ──────────────────────────────
-        if (serverName.trim().toLowerCase() === 'penpot') {
-          // 1. Ensure pnpm is installed (Penpot MCP requires it internally).
-          //    executeCommand routes through the OS shell (PowerShell on Windows,
-          //    bash on Unix), which resolves .cmd wrappers automatically, so we
-          //    do not need to append ".cmd" manually here.
-          const pnpmCheck = await executeCommand('pnpm --version');
-          if (pnpmCheck.exitCode !== 0) {
-            onToken('\x1b[96m⚙  pnpm not found — installing globally via npm…\x1b[0m\n');
-            const installResult = await executeCommand('npm install -g pnpm');
-            if (installResult.exitCode !== 0) {
-              return (
-                `Failed to install pnpm (required for Penpot MCP):\n` +
-                (installResult.stderr || installResult.stdout)
-              );
-            }
-          }
-
-          // 2. Inject PENPOT_ACCESS_TOKEN from memory if not already supplied
-          if (!configuredEnv['PENPOT_ACCESS_TOKEN']) {
-            const storedToken = this.memoryManager.get('penpot_access_token');
-            if (storedToken) {
-              configuredEnv['PENPOT_ACCESS_TOKEN'] = storedToken;
-            }
-          }
-        }
-        // ─────────────────────────────────────────────────────────────────
-
         const serverConfig = {
           name: serverName.trim(),
           command: serverCommand.trim(),
@@ -553,6 +584,59 @@ export class Planner {
         }
         this.memoryManager.set(memKey.trim(), memValue);
         return `Memory stored: "${memKey.trim()}" = "${memValue}"`;
+      }
+
+      // Handle skills_search: search Smithery registry
+      if (name === 'skills_search') {
+        const query = args['query'] as string;
+        if (!query?.trim()) {
+          return 'Error: skills_search requires a non-empty "query" field.';
+        }
+        const rawLimit = args['limit'];
+        const limit = typeof rawLimit === 'number'
+          ? Math.min(Math.max(1, rawLimit), 20)
+          : 8;
+        try {
+          const results = await this.skillsManager.search(query.trim(), limit);
+          if (results.length === 0) {
+            return `No skills found for query: "${query}". Try different keywords.`;
+          }
+          const lines = results.map((s, i) => {
+            const badge = s.isVerified ? ' [verified]' : '';
+            const uses  = s.useCount !== undefined ? ` (${s.useCount.toLocaleString()} uses)` : '';
+            return `${i + 1}. ${s.qualifiedName}${badge}${uses}\n   ${s.description ?? ''}`;
+          });
+          return `Found ${results.length} skill(s) for "${query}":\n\n${lines.join('\n\n')}`;
+        } catch (searchErr) {
+          const msg = searchErr instanceof Error ? searchErr.message : String(searchErr);
+          return `Error searching Smithery registry: ${msg}. You can still install skills manually using mcp_configure.`;
+        }
+      }
+
+      // Handle skills_load: install a Smithery skill
+      if (name === 'skills_load') {
+        const qualifiedName = args['qualifiedName'] as string;
+        const localName = args['localName'] as string;
+        const description = (args['description'] as string | undefined) ?? '';
+        if (!qualifiedName?.trim()) {
+          return 'Error: skills_load requires a non-empty "qualifiedName" field.';
+        }
+        if (!localName?.trim()) {
+          return 'Error: skills_load requires a non-empty "localName" field.';
+        }
+        try {
+          await this.skillsManager.install(qualifiedName.trim(), localName.trim(), description);
+          return (
+            `Skill "${localName.trim()}" (${qualifiedName}) installed and started successfully. ` +
+            `Its tools are now available as mcp__${localName.trim()}__* tools.`
+          );
+        } catch (loadErr) {
+          const msg = loadErr instanceof Error ? loadErr.message : String(loadErr);
+          return (
+            `Skill "${localName.trim()}" was saved to config but failed to start: ${msg}. ` +
+            `It will be retried on the next IntelliCode launch.`
+          );
+        }
       }
 
       // Check MCP tools first

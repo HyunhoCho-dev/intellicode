@@ -6,27 +6,31 @@
  *
  * Color palette  : sky-blue / cyan as the primary brand accent
  * Box style       : rounded corners (╭ ╮ ╰ ╯) with thin lines
- * Width           : 72 columns outer / 70 columns inner content
+ * Width           : 76 columns outer / 74 columns inner content
  */
 
 // ─── ANSI palette ──────────────────────────────────────────────────────────────
 
 export const C = {
-  cyan:    '\x1b[96m',  // bright cyan  — primary brand
-  cyanD:   '\x1b[36m',  // dim cyan     — accents
-  white:   '\x1b[97m',  // bright white — main text
-  gray:    '\x1b[90m',  // dark gray    — secondary / hints
-  green:   '\x1b[32m',  // green        — success
-  red:     '\x1b[31m',  // red          — errors
-  yellow:  '\x1b[33m',  // yellow       — warnings
+  cyan:    '\x1b[96m',  // bright cyan    — primary brand
+  cyanD:   '\x1b[36m',  // dim cyan       — accents
+  blue:    '\x1b[94m',  // bright blue    — highlights
+  white:   '\x1b[97m',  // bright white   — main text
+  gray:    '\x1b[90m',  // dark gray      — secondary / hints
+  green:   '\x1b[32m',  // green          — success
+  greenB:  '\x1b[92m',  // bright green   — strong success
+  red:     '\x1b[31m',  // red            — errors
+  yellow:  '\x1b[33m',  // yellow         — warnings
+  magenta: '\x1b[95m',  // bright magenta — skills accent
   bold:    '\x1b[1m',
+  dim:     '\x1b[2m',
   reset:   '\x1b[0m',
 } as const;
 
 // ─── Box drawing ───────────────────────────────────────────────────────────────
 
-const BOX_OUTER = 72;          // total columns including the two │ chars
-const BOX_INNER = BOX_OUTER - 2; // 70 — chars between │ and │
+const BOX_OUTER = 76;          // total columns including the two │ chars
+const BOX_INNER = BOX_OUTER - 2; // 74 — chars between │ and │
 
 /** Strip ANSI escape codes to obtain the printable (visible) length. */
 function visLen(s: string): number {
@@ -81,8 +85,8 @@ export function printBanner(version: string): void {
   const logoText = `${C.bold}${C.cyan}I N T E L L I C O D E${C.reset}`;
   const logoLine = `  ${C.cyan}◈${C.reset}  ${logoText}`;
 
-  const subText  = `  AI Coding Agent  ·  GitHub Copilot  ·  `;
-  const verText  = `${C.cyan}v${version}${C.reset}`;
+  const subText  = `  AI Coding Agent  ·  GitHub Copilot  ·  Smithery Skills  ·  v`;
+  const verText  = `${C.cyan}${version}${C.reset}`;
   const subLine  = `${C.gray}${subText}${verText}${C.reset}`;
 
   process.stdout.write('\n');
@@ -174,12 +178,17 @@ export interface StatusInfo {
   memories:   number;
   history:    number;
   mcpServers: string[];
+  skills:     string[];
 }
 
 /** Print a bordered status box to stdout. */
 export function printStatus(info: StatusInfo): void {
   const mcp = info.mcpServers.length > 0
     ? info.mcpServers.map((s) => `${C.cyan}${s}${C.reset}`).join(', ')
+    : `${C.gray}(none)${C.reset}`;
+
+  const skills = info.skills.length > 0
+    ? info.skills.map((s) => `${C.magenta}${s}${C.reset}`).join(', ')
     : `${C.gray}(none)${C.reset}`;
 
   process.stdout.write('\n');
@@ -189,6 +198,7 @@ export function printStatus(info: StatusInfo): void {
   console.log(`  ${statusRow('Memory',      `${info.memories} stored`)}`);
   console.log(`  ${statusRow('History',     `${info.history} messages`)}`);
   console.log(`  ${statusRow('MCP Servers', mcp)}`);
+  console.log(`  ${statusRow('Skills',      skills)}`);
   console.log(`  ${boxBottom()}`);
   process.stdout.write('\n');
 }
@@ -200,10 +210,9 @@ export function printHelp(): void {
   const cmd  = (c: string) => `${C.cyan}${c}${C.reset}`;
   const note = (n: string) => `${C.gray}${n}${C.reset}`;
 
-  /** Two-column command row:  cmd (20 wide)  description */
+  /** Two-column command row:  cmd (22 wide)  description */
   const row = (c: string, d: string) => {
-    // padTo uses visible length, so just pass the target visible width (20)
-    const fmtC = padTo(cmd(c), 20);
+    const fmtC = padTo(cmd(c), 22);
     return boxLine(`  ${fmtC}  ${note(d)}`);
   };
 
@@ -241,6 +250,17 @@ export function printHelp(): void {
   console.log(`  ${boxBottom()}`);
   process.stdout.write('\n');
 
+  // ── Skills (Smithery) ──
+  console.log(`  ${boxTop('Skills  ·  Smithery Ecosystem')}`);
+  console.log(`  ${row('/skills list',          'Show installed skills')}`);
+  console.log(`  ${row('/skills search <q>',    'Search Smithery registry for skills')}`);
+  console.log(`  ${row('/skills popular',       'Browse top skills from Smithery')}`);
+  console.log(`  ${row('/skills add <id> [nm]', 'Install a skill from Smithery')}`);
+  console.log(`  ${row('/skills remove <name>', 'Uninstall a skill')}`);
+  console.log(`  ${row('/skills create <name>', 'Scaffold a new skill interactively')}`);
+  console.log(`  ${boxBottom()}`);
+  process.stdout.write('\n');
+
   // ── MCP Servers ──
   console.log(`  ${boxTop('MCP Servers')}`);
   console.log(`  ${row('/mcp list',            'List configured MCP servers')}`);
@@ -248,19 +268,77 @@ export function printHelp(): void {
   console.log(`  ${boxBottom()}`);
   process.stdout.write('\n');
 
-  // ── Penpot ──
-  console.log(`  ${boxTop('Penpot Design')}`);
-  console.log(`  ${row('/penpot connect',  'Guided Penpot MCP setup')}`);
-  console.log(`  ${row('/penpot status',   'Show Penpot connection status')}`);
-  console.log(`  ${row('/penpot help',     'Penpot workflow tips')}`);
-  console.log(`  ${boxBottom()}`);
-  process.stdout.write('\n');
-
   // ── Maintenance ──
   console.log(`  ${boxTop('Maintenance')}`);
   console.log(`  ${row('/update',  'Pull latest changes and rebuild')}`);
-  console.log(`  ${row('/status',  'Show model, think level, memory & MCP info')}`);
+  console.log(`  ${row('/status',  'Show model, think level, memory, MCP & skills')}`);
   console.log(`  ${row('/help',    'Show this help message')}`);
+  console.log(`  ${boxBottom()}`);
+  process.stdout.write('\n');
+}
+
+// ─── Skills search results ──────────────────────────────────────────────────
+
+import type { SmitheryServer, InstalledSkill } from './skills/manager';
+
+/**
+ * Print a numbered list of Smithery search results.
+ * @param results  Array of Smithery server records.
+ * @param title    Section title shown in the box header.
+ */
+export function printSkillsSearch(
+  results: SmitheryServer[],
+  title = 'Smithery Skills'
+): void {
+  if (results.length === 0) {
+    console.log(`${C.gray}  ◦ No skills found.${C.reset}\n`);
+    return;
+  }
+
+  process.stdout.write('\n');
+  console.log(`  ${boxTop(title)}`);
+  results.forEach((s, i) => {
+    const num   = `${C.cyan}${String(i + 1).padStart(2, ' ')}${C.reset}`;
+    const name  = `${C.bold}${C.cyan}${s.qualifiedName}${C.reset}`;
+    const badge = s.isVerified ? ` ${C.green}✓${C.reset}` : '';
+    const uses  = s.useCount !== undefined
+      ? ` ${C.gray}· ${s.useCount.toLocaleString()} uses${C.reset}`
+      : '';
+    const desc  = s.description
+      ? s.description.length > 48
+        ? s.description.slice(0, 45) + '…'
+        : s.description
+      : '';
+
+    console.log(`  ${boxLine(`  ${num}  ${name}${badge}${uses}`)}`);
+    if (desc) {
+      console.log(`  ${boxLine(`       ${C.gray}${desc}${C.reset}`)}`);
+    }
+  });
+  console.log(`  ${boxBottom()}`);
+  process.stdout.write('\n');
+}
+
+/**
+ * Print the list of currently installed skills.
+ * @param skills  Array of InstalledSkill records.
+ */
+export function printInstalledSkills(skills: InstalledSkill[]): void {
+  if (skills.length === 0) {
+    console.log(`${C.gray}  ◦ No skills installed. Use ${C.reset}/skills search <query>${C.gray} to discover skills.${C.reset}\n`);
+    return;
+  }
+
+  process.stdout.write('\n');
+  console.log(`  ${boxTop('Installed Skills')}`);
+  for (const s of skills) {
+    const name = `${C.magenta}${s.name}${C.reset}`;
+    const qn   = `${C.gray}${s.qualifiedName}${C.reset}`;
+    const desc = s.description
+      ? `  ${C.gray}${s.description.length > 40 ? s.description.slice(0, 37) + '…' : s.description}${C.reset}`
+      : '';
+    console.log(`  ${boxLine(`  ${name}  ${qn}${desc}`)}`);
+  }
   console.log(`  ${boxBottom()}`);
   process.stdout.write('\n');
 }
